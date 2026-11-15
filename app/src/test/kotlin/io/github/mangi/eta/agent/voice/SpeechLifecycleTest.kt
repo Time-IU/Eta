@@ -61,7 +61,7 @@ class SpeechLifecycleTest {
 
     private fun start(
         target: SpeechInputController = controller,
-        settings: SpeechSettings = SpeechSettings(),
+        settings: SpeechSettings = SpeechSettings(asr = AsrProvider.QWEN_REALTIME),
         holdToTalk: Boolean = false,
     ): FakeStreamSession {
         target.start(
@@ -100,6 +100,25 @@ class SpeechLifecycleTest {
         current.complete("新结果")
         shadowOf(Looper.getMainLooper()).idle()
         assertEquals(listOf("新结果"), results)
+    }
+
+    @Test fun staleEndpointCannotFinishNewGenerationAndDuplicateEndpointDeliversOnce() {
+        val overlay = createController(automaticEndpoint = true)
+        try {
+            val old = start(overlay)
+            val lateEndpoint = old.endpointCallback
+            overlay.cancel()
+            val current = start(overlay)
+            lateEndpoint()
+            shadowOf(Looper.getMainLooper()).idle()
+            assertFalse(current.finished)
+            current.endpointCallback()
+            current.endpointCallback()
+            overlay.finish()
+            current.complete("唯一结果")
+            shadowOf(Looper.getMainLooper()).idle()
+            assertEquals(listOf("唯一结果"), results)
+        } finally { overlay.cancel() }
     }
 
     @Test fun closingOwnerReleasesRecognition() {
@@ -163,7 +182,7 @@ class SpeechLifecycleTest {
     @Test fun overlaySubmitsAfterPauseByDefault() {
         val overlay = createController(automaticEndpoint = true)
         try {
-            val session = start(overlay, SpeechSettings())
+            val session = start(overlay, SpeechSettings(asr = AsrProvider.QWEN_REALTIME))
             assertEquals(SpeechSettings.DEFAULT_AUTO_SEND_SILENCE_MS, session.endpointSilenceMs)
             session.serverEndpoint("打开设置")
             shadowOf(Looper.getMainLooper()).idle()
@@ -174,15 +193,30 @@ class SpeechLifecycleTest {
         }
     }
 
+    @Test fun capturePauseFinishesStreamWithoutAnyServerEndpointCallback() {
+        val overlay = createController(automaticEndpoint = true)
+        try {
+            val session = start(overlay)
+            session.frames.trySend(endpointPcm(0, 200) + endpointPcm(2500, 400) + endpointPcm(0, 2000)).getOrThrow()
+            shadowOf(Looper.getMainLooper()).idle()
+            assertTrue(session.finished)
+            assertTrue(results.isEmpty())
+            session.complete("流式结果")
+            shadowOf(Looper.getMainLooper()).idle()
+            assertEquals(listOf("流式结果"), results)
+        } finally { overlay.cancel() }
+    }
+
     @Test fun overlayWaitsWhenAutoSendIsOffOrHoldingToTalk() {
         listOf(
-            SpeechSettings(autoSendSilenceMs = 0) to false,
-            SpeechSettings() to true,
+            SpeechSettings(asr = AsrProvider.QWEN_REALTIME, autoSendSilenceMs = 0) to false,
+            SpeechSettings(asr = AsrProvider.QWEN_REALTIME) to true,
         ).forEach { (settings, hold) ->
             val overlay = createController(automaticEndpoint = true)
             try {
                 val session = start(overlay, settings, holdToTalk = hold)
                 assertEquals(0, session.endpointSilenceMs)
+                session.endpointCallback() // Even a late/misbehaving provider cannot end a held session.
                 session.emitPreview("还没说完")
                 shadowOf(Looper.getMainLooper()).idle()
                 assertFalse(session.finished)
@@ -225,7 +259,7 @@ class SpeechLifecycleTest {
         ).forEach { (refiner, expected) ->
             val overlay = createController(automaticEndpoint = true, refiner = refiner)
             try {
-                val session = start(overlay, SpeechSettings(refineTranscript = true))
+                val session = start(overlay, SpeechSettings(asr = AsrProvider.QWEN_REALTIME, refineTranscript = true))
                 session.serverEndpoint("用配森写脚本")
                 val deadline = System.nanoTime() + 3_000_000_000
                 while (results.isEmpty() && System.nanoTime() < deadline) {
@@ -246,7 +280,7 @@ class SpeechLifecycleTest {
         private val stopSignal = CompletableDeferred<Unit>()
         private val transcript = CompletableDeferred<String>()
         private var previewCallback: (String) -> Unit = {}
-        private var endpointCallback: () -> Unit = {}
+        var endpointCallback: () -> Unit = {}
         var endpointSilenceMs = -1
             private set
         var finished = false

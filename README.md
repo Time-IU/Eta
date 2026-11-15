@@ -1,3 +1,14 @@
+<!-- time-iu-custom-fork-banner -->
+>
+> **非官方个人 fork · Time-IU/Eta**
+>
+> 基于 Mangi-11/Eta 官方 v3.4.4；本定制由 Time-IU 维护并使用 AI 辅助，不代表上游作者对定制版的背书，也不是官方加强版或破解版。
+>
+> **定制内容、安装/签名提醒及验证边界请先看 [定制说明](docs/custom/README.md)** · [变更记录](docs/custom/CHANGELOG-3.4.4.md) · [源码映射](docs/custom/MODIFICATIONS.md)。
+>
+> 以下保留上游 README 原文，原文中的下载、徽章及部分链接指向上游；不代表本 fork 已发布或提交 PR。定制问题请先向 [本 fork](https://github.com/Time-IU/Eta/issues) 反馈。
+<!-- /time-iu-custom-fork-banner -->
+
 <h1 align="center">Eta</h1>
 
 <p align="center"><strong>简体中文</strong> | <a href="README_EN.md">English</a></p>

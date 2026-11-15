@@ -62,12 +62,14 @@ internal fun AsrProvider.label(): String = stringResource(
         AsrProvider.DOUBAO -> R.string.speech_asr_doubao
         AsrProvider.MIMO -> R.string.speech_asr_mimo
         AsrProvider.DEEPSEEK -> R.string.speech_asr_deepseek
+        AsrProvider.LOCAL, AsrProvider.QWEN3_LOCAL, AsrProvider.SHERPA_NCNN -> R.string.speech_asr_local
     },
 )
 
 @Composable
 internal fun TtsProvider.label(): String = stringResource(
     when (this) {
+        TtsProvider.SYSTEM -> R.string.speech_tts_system
         TtsProvider.NONE -> R.string.speech_tts_none
         TtsProvider.QWEN -> R.string.speech_tts_qwen
         TtsProvider.DOUBAO -> R.string.speech_tts_doubao
@@ -220,7 +222,7 @@ internal fun SpeechField(
 }
 
 @Composable
-internal fun SpeechSaveBlock(store: SpeechSettingsStore, validate: () -> Unit) {
+internal fun SpeechSaveBlock(store: SpeechSettingsStore, persistCredentials: Boolean = true, validate: () -> Unit) {
     val uiStyle = LocalUiStyle.current
     Column(
         modifier = Modifier
@@ -236,7 +238,7 @@ internal fun SpeechSaveBlock(store: SpeechSettingsStore, validate: () -> Unit) {
                 enabled = store.loaded && !store.saving,
                 role = CouiButtonRole.Primary,
                 modifier = Modifier.fillMaxWidth(),
-                onClick = { store.save(validate) },
+                onClick = { store.save(validate, persistCredentials) },
             )
         } else {
             TextButton(
@@ -244,7 +246,7 @@ internal fun SpeechSaveBlock(store: SpeechSettingsStore, validate: () -> Unit) {
                 enabled = store.loaded && !store.saving,
                 modifier = Modifier.fillMaxWidth(),
                 colors = ButtonDefaults.textButtonColorsPrimary(),
-                onClick = { store.save(validate) },
+                onClick = { store.save(validate, persistCredentials) },
             )
         }
         store.message?.let { message ->

@@ -1,3 +1,12 @@
+<!-- time-iu-custom-fork-banner -->
+>
+> **Unofficial personal fork · Time-IU/Eta**, based on Mangi-11/Eta v3.4.4. Maintained by Time-IU with AI assistance; not an official edition or an upstream endorsement.
+>
+> See [custom documentation](docs/custom/README.md), [changes](docs/custom/CHANGELOG-3.4.4.md), and [source map](docs/custom/MODIFICATIONS.md) for scope, signing/data precautions, and validation limits. Report fork-specific issues to [this fork](https://github.com/Time-IU/Eta/issues).
+>
+> The upstream README below is preserved verbatim; its download links and badges still refer to upstream. This notice does not claim a fork release, push, or PR has happened.
+<!-- /time-iu-custom-fork-banner -->
+
 <h1 align="center">Eta</h1>
 
 <p align="center"><a href="README.md">简体中文</a> | <strong>English</strong></p>

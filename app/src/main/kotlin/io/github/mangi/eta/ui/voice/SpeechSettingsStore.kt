@@ -5,6 +5,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import io.github.mangi.eta.R
+import io.github.mangi.eta.agent.voice.SpeechErrorCode
+import io.github.mangi.eta.data.model.TtsProvider
 import io.github.mangi.eta.agent.voice.SpeechFailure
 import io.github.mangi.eta.agent.voice.SpeechInputController
 import io.github.mangi.eta.agent.voice.SpeechPlaybackController
@@ -24,6 +26,8 @@ import kotlinx.coroutines.launch
 internal class SpeechSettingsStore(
     private val context: Context,
     private val scope: CoroutineScope,
+    private val recognitionOnly: Boolean = false,
+    private val synthesisOnly: Boolean = false,
 ) {
     var settings by mutableStateOf(SpeechSettings())
         private set
@@ -45,17 +49,33 @@ internal class SpeechSettingsStore(
     })
     val playback = SpeechPlaybackController(context, scope)
 
+    private var credentialsLoaded = false
+
+    private suspend fun loadCredentials() {
+        if (credentialsLoaded) return
+        credentialsLoaded = true
+        try {
+            hasProviderDeepSeekKey = SpeechSettingsRepository.deepSeekProviderCredentials() != null
+            credentials = SpeechSettingsRepository.credentials(context)
+        } catch (_: SpeechCredentialsUnavailable) {
+            message = context.getString(R.string.speech_credentials_lost)
+            messageIsError = true
+        }
+    }
+
+    private fun needsCredentials(value: SpeechSettings) = if (recognitionOnly) {
+        !value.asr.isLocal
+    } else if (synthesisOnly) {
+        value.tts != TtsProvider.SYSTEM && value.tts != TtsProvider.NONE
+    } else {
+        true // OSS settings still need their independent credential editor.
+    }
+
     init {
         scope.launch {
             try {
                 settings = SpeechSettingsRepository.settings()
-                hasProviderDeepSeekKey = SpeechSettingsRepository.deepSeekProviderCredentials() != null
-                try {
-                    credentials = SpeechSettingsRepository.credentials(context)
-                } catch (_: SpeechCredentialsUnavailable) {
-                    message = context.getString(R.string.speech_credentials_lost)
-                    messageIsError = true
-                }
+                if (needsCredentials(settings)) loadCredentials()
                 loaded = true
             } catch (error: Exception) {
                 if (error is CancellationException) throw error
@@ -67,7 +87,11 @@ internal class SpeechSettingsStore(
 
     fun edit(value: SpeechSettings) {
         stop()
-        settings = value
+        settings = value.canonicalized()
+        if (needsCredentials(value) && !credentialsLoaded) {
+            loaded = false
+            scope.launch { try { loadCredentials() } finally { loaded = true } }
+        }
         message = null
     }
 
@@ -83,7 +107,7 @@ internal class SpeechSettingsStore(
     }
 
     /** [validate] 由页面按自己的方向提供（识别 / 播报 / 不校验），校验失败即中断保存。 */
-    fun save(validate: () -> Unit) {
+    fun save(validate: () -> Unit, persistCredentials: Boolean = true) {
         if (!loaded || saving) return
         val config = settings
         val secrets = credentials
@@ -101,8 +125,11 @@ internal class SpeechSettingsStore(
         saving = true
         scope.launch {
             try {
-                SpeechSettingsRepository.saveCredentials(context, secrets)
+                if (persistCredentials && needsCredentials(config) && credentialsLoaded) SpeechSettingsRepository.saveCredentials(context, secrets)
                 SpeechSettingsRepository.save(config)
+                if (recognitionOnly && config.asr.isLocal && SpeechSettingsRepository.settings().asr != config.asr) {
+                    throw SpeechFailure(SpeechErrorCode.STORAGE, "本机离线设置保存未确认，请重试")
+                }
                 message = context.getString(
                     if (settings === config && credentials === secrets) {
                         R.string.speech_saved

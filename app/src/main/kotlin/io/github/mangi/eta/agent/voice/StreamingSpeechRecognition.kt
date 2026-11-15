@@ -25,9 +25,12 @@ internal suspend fun recognizeSpeechStream(
     // 不自动结束时沿用服务默认断句，只影响预览分段，不会提前结束录音。
     val automaticEndpoint = endpointSilenceMs > 0
     val sentenceSilenceMs = if (automaticEndpoint) endpointSilenceMs else DEFAULT_SENTENCE_SILENCE_MS
-    if (settings.asr == AsrProvider.DOUBAO) {
-        recognizeDoubao(settings, credentials, frames, onReady, onPreview, onEndpoint, automaticEndpoint, sentenceSilenceMs)
-    } else recognizeQwen(settings, credentials, frames, onReady, onPreview, onEndpoint, automaticEndpoint, sentenceSilenceMs)
+    when (settings.asr) {
+        AsrProvider.DOUBAO -> recognizeDoubao(settings, credentials, frames, onReady, onPreview, onEndpoint, automaticEndpoint, sentenceSilenceMs)
+        AsrProvider.QWEN_REALTIME -> recognizeQwen(settings, credentials, frames, onReady, onPreview, onEndpoint, automaticEndpoint, sentenceSilenceMs)
+        AsrProvider.LOCAL, AsrProvider.SHERPA_NCNN, AsrProvider.QWEN3_LOCAL, AsrProvider.MIMO, AsrProvider.QWEN_FLASH, AsrProvider.QWEN_FILE, AsrProvider.DEEPSEEK ->
+            throw SpeechFailure(SpeechErrorCode.CONFIGURATION, "当前引擎不使用云端流式识别")
+    }
 }
 
 private const val DEFAULT_SENTENCE_SILENCE_MS = 800

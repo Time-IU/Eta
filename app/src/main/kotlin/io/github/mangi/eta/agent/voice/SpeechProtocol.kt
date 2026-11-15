@@ -36,6 +36,12 @@ internal fun validateSpeechSettings(
     }
     if (synthesis) {
         when (settings.tts) {
+            TtsProvider.SYSTEM -> {
+                val local = settings.systemTts
+                if (local.rate !in 0.5f..2f || local.pitch !in 0.5f..2f) {
+                    throw SpeechFailure(SpeechErrorCode.CONFIGURATION, "系统朗读语速和音调须在 0.5～2 倍之间")
+                }
+            }
             TtsProvider.NONE -> throw SpeechFailure(SpeechErrorCode.CONFIGURATION, "请先在设置中配置语音播报")
             TtsProvider.QWEN -> {
                 required(secrets.qwenTts, "千问播报 API Key")
@@ -79,6 +85,7 @@ internal fun validateSpeechSettings(
             }
         }
     } else when (settings.asr) {
+        AsrProvider.LOCAL, AsrProvider.SHERPA_NCNN, AsrProvider.QWEN3_LOCAL -> Unit // No credentials, URLs or cloud validation.
         AsrProvider.MIMO -> {
             required(secrets.mimoAsr, "MiMo 识别 API Key")
             speechBaseUrl(settings.mimoAsr.baseUrl)

@@ -23,6 +23,8 @@ internal suspend fun recognizeSpeechFile(
 ): String = withContext(Dispatchers.IO) {
     withTimeout(300_000) {
         when (settings.asr) {
+            AsrProvider.LOCAL, AsrProvider.SHERPA_NCNN, AsrProvider.QWEN3_LOCAL ->
+                throw SpeechFailure(SpeechErrorCode.CONFIGURATION, "本机离线不使用云端文件识别；请使用本机 PCM 录音入口，缺少模型时先下载或导入")
             AsrProvider.MIMO -> {
                 onProgress("正在识别")
                 recognizeMimoSpeech(settings.mimoAsr, credentials.mimoAsr, wav)

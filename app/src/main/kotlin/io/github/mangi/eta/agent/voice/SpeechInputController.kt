@@ -1,6 +1,9 @@
 package io.github.mangi.eta.agent.voice
 
 import android.content.Context
+import io.github.mangi.eta.agent.voice.offline.OfflineAsrEngine
+import io.github.mangi.eta.agent.voice.qwen.QwenAsrEngine
+import io.github.mangi.eta.agent.voice.local.LocalSpeechEngine
 import io.github.mangi.eta.core.AndroidAgentLogger
 import io.github.mangi.eta.data.model.AsrProvider
 import io.github.mangi.eta.data.model.SpeechCredentials
@@ -53,6 +56,20 @@ internal class SpeechInputController(
         ByteArray,
         (String) -> Unit,
     ) -> String = ::recognizeSpeechFile,
+    private val recognizeOffline: suspend (
+        Context,
+        ReceiveChannel<ByteArray>,
+        () -> Unit,
+        (String) -> Unit,
+        () -> Unit,
+        Int,
+    ) -> String = OfflineAsrEngine::recognize,
+    private val recognizeQwen: suspend (
+        Context, ReceiveChannel<ByteArray>, () -> Unit, (String) -> Unit, () -> Unit, Int,
+    ) -> String = QwenAsrEngine::recognize,
+    private val recognizeLocal: suspend (
+        Context, ReceiveChannel<ByteArray>, () -> Unit, (String) -> Unit, () -> Unit, Int,
+    ) -> String = LocalSpeechEngine::recognize,
     private val onResult: (String) -> Unit,
 ) {
     private val mutableState = MutableStateFlow(SpeechInputState())
@@ -74,14 +91,36 @@ internal class SpeechInputController(
         mutableState.value = SpeechInputState(phase = EtaSpeechPhase.STARTING, progress = "正在连接")
         job = scope.launch(Dispatchers.Main.immediate) {
             try {
-                val rawConfig = settings ?: SpeechSettingsRepository.settings()
+                val rawConfig = (settings ?: SpeechSettingsRepository.settings()).canonicalized()
                 if (!rawConfig.recognitionEnabled) return@launch
                 lease = SpeechAudioLease(context) { cancel() }.also { it.acquire(playback = false) }
-                val rawSecrets = credentials ?: SpeechSettingsRepository.credentials(context)
-                val (config, secrets) = SpeechSettingsRepository.resolveDeepSeekFallback(rawConfig, rawSecrets)
-                validateSpeechSettings(config, secrets, synthesis = false)
+                val offline = rawConfig.asr.isLocal
+                // Strict local recognition never opens either speech or provider credentials.
+                val (config, secrets) = if (offline) rawConfig to null else {
+                    val rawSecrets = credentials ?: SpeechSettingsRepository.credentials(context)
+                    SpeechSettingsRepository.resolveDeepSeekFallback(rawConfig, rawSecrets).also {
+                        validateSpeechSettings(it.first, it.second, synthesis = false)
+                    }
+                }
+                if (offline) mutableState.value = mutableState.value.copy(progress = "正在加载本机语音引擎")
                 val endpointSilenceMs = if (automaticEndpoint && !holdToTalk) config.autoSendSilenceMs else 0
-                val audio = createRecorder()
+                // Both native/server and capture endpoints share the generation/finish gate.
+                val endpoint: () -> Unit = {
+                    scope.launch(Dispatchers.Main.immediate) {
+                        if (endpointSilenceMs > 0 && generation == session && !finishRequested) {
+                            AndroidAgentLogger.info("Eta speech endpoint code=pause silenceMs=$endpointSilenceMs")
+                            finish()
+                        }
+                    }
+                }
+                val source = createRecorder()
+                val audio = if (endpointSilenceMs > 0) {
+                    EndpointSpeechAudioCapture(source, endpointSilenceMs, endpoint)
+                } else source
+                if (automaticEndpoint) AndroidAgentLogger.info(
+                    "Eta speech endpoint policy=${if (endpointSilenceMs > 0) "adaptive_pcm" else "manual"} " +
+                        "silenceMs=$endpointSilenceMs hold=$holdToTalk",
+                )
                 recorder = audio
                 fun update(transform: (SpeechInputState) -> SpeechInputState) {
                     scope.launch(Dispatchers.Main.immediate) {
@@ -90,14 +129,18 @@ internal class SpeechInputController(
                 }
                 val text = coroutineScope {
                     var recording: Job? = null
-                    val begin = {
-                        if (recording == null) {
+                    val begin = begin@{
+                        if (generation == session && !finishRequested && recording == null) {
+                            ensureActive()
                             beforeCapture()
+                            // The hook may cancel/replace this session synchronously.
+                            if (generation != session || finishRequested) return@begin Unit
+                            ensureActive()
                             capturing = true
                             recording = launch {
                                 try {
                                     audio.record(
-                                        onReady = { update { it.copy(phase = EtaSpeechPhase.LISTENING, progress = "正在聆听，点击完成结束") } },
+                                        onReady = { update { it.copy(phase = EtaSpeechPhase.LISTENING, progress = if (endpointSilenceMs > 0) "正在等待停顿，点击完成结束" else if (config.asr.isLocal) "说完识别，非实时逐字；最长 30 秒" else "正在聆听，点击完成结束") } },
                                         onLevel = { level -> update { it.copy(level = level) } },
                                     )
                                 } finally {
@@ -109,24 +152,36 @@ internal class SpeechInputController(
                         Unit
                     }
                     try {
-                        if (config.asr == AsrProvider.QWEN_REALTIME || config.asr == AsrProvider.DOUBAO) {
-                            recognizeStream(
+                        when (config.asr) {
+                            AsrProvider.LOCAL, AsrProvider.SHERPA_NCNN, AsrProvider.QWEN3_LOCAL -> recognizeLocal(
+                                context, audio.frames, begin,
+                                { preview -> update { it.copy(preview = preview) } },
+                                // Capture owns local endpointing; the old fixed-threshold service VAD
+                                // otherwise cuts PCM independently before the shared stream is drained.
+                                endpoint, 0,
+                            )
+                            AsrProvider.QWEN_REALTIME, AsrProvider.DOUBAO -> recognizeStream(
                                 config,
-                                secrets,
+                                requireNotNull(secrets),
                                 audio.frames,
                                 begin,
                                 { preview -> update { it.copy(preview = preview) } },
-                                { audio.finish() },
+                                endpoint,
                                 endpointSilenceMs,
                             )
-                        } else {
-                            begin()
-                            val wav = withTimeout(65_000) { collectSpeechAudio(audio.frames) }
-                            // 关闭通道可能同步唤醒收集器，旧会话不能在取消传播完成前启动请求。
-                            coroutineContext.ensureActive()
-                            if (generation != session) throw CancellationException("Speech session replaced")
-                            recognizeFile(context, config, secrets, wav) { progress ->
-                                update { it.copy(phase = EtaSpeechPhase.RECOGNIZING, progress = progress) }
+                            AsrProvider.MIMO, AsrProvider.QWEN_FLASH, AsrProvider.QWEN_FILE, AsrProvider.DEEPSEEK -> {
+                                begin()
+                                val wav = withTimeout(65_000) { collectSpeechAudio(audio.frames) }
+                                // 关闭通道可能同步唤醒收集器，旧会话不能在取消传播完成前启动请求。
+                                coroutineContext.ensureActive()
+                                if (generation != session) throw CancellationException("Speech session replaced")
+                                // Drain capture cleanup/foreground release before file decoding starts.
+                                recording?.join()
+                                coroutineContext.ensureActive()
+                                if (generation != session) throw CancellationException("Speech session replaced")
+                                recognizeFile(context, config, requireNotNull(secrets), wav) { progress ->
+                                    update { it.copy(phase = EtaSpeechPhase.RECOGNIZING, progress = progress) }
+                                }
                             }
                         }
                     } finally {
@@ -135,7 +190,8 @@ internal class SpeechInputController(
                     }
                 }
                 if (text.isBlank()) throw SpeechFailure(SpeechErrorCode.NO_SPEECH, "没有识别到语音，请重试")
-                val final = refined(session, config.refineTranscript, text)
+                val final = refined(session, !offline && config.refineTranscript, text)
+                coroutineContext.ensureActive()
                 if (generation == session) {
                     cancel()
                     onResult(final)

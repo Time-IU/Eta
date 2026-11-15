@@ -40,20 +40,21 @@ import top.yukonga.miuix.kmp.theme.MiuixTheme
 internal fun SpeechRecognitionScreen(onBack: () -> Unit, onOpenOss: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val store = remember { SpeechSettingsStore(context, scope) }
+    val store = remember { SpeechSettingsStore(context, scope, recognitionOnly = true) }
     SpeechLifecycle { store.stop() }
     val settings = store.settings
-    val asrLabels = AsrProvider.entries.map { it.label() }
+    val asrLabels = AsrProvider.selectable.map { it.label() }
     val asrNoteRes = when (settings.asr) {
         AsrProvider.QWEN_REALTIME, AsrProvider.DOUBAO -> R.string.speech_asr_note_streaming
         AsrProvider.QWEN_FLASH -> R.string.speech_asr_note_flash
         AsrProvider.QWEN_FILE -> R.string.speech_asr_note_file
         AsrProvider.MIMO -> R.string.speech_asr_note_mimo
         AsrProvider.DEEPSEEK -> R.string.speech_asr_note_deepseek
+        AsrProvider.LOCAL, AsrProvider.QWEN3_LOCAL, AsrProvider.SHERPA_NCNN -> R.string.speech_asr_note_local
     }
     val showQwenLanguage = when (settings.asr) {
         AsrProvider.QWEN_REALTIME, AsrProvider.QWEN_FLASH, AsrProvider.QWEN_FILE -> true
-        AsrProvider.DOUBAO, AsrProvider.MIMO, AsrProvider.DEEPSEEK -> false
+        AsrProvider.DOUBAO, AsrProvider.MIMO, AsrProvider.DEEPSEEK, AsrProvider.LOCAL, AsrProvider.SHERPA_NCNN, AsrProvider.QWEN3_LOCAL -> false
     }
 
     when (LocalUiStyle.current) {
@@ -78,9 +79,9 @@ internal fun SpeechRecognitionScreen(onBack: () -> Unit, onOpenOss: () -> Unit) 
                         CouiDropdownPreference(
                             title = stringResource(R.string.speech_service_and_model),
                             items = asrLabels,
-                            selectedIndex = settings.asr.ordinal,
+                            selectedIndex = AsrProvider.selectable.indexOf(settings.asr.canonical),
                             onSelectedIndexChange = { index ->
-                                AsrProvider.entries.getOrNull(index)?.let { store.edit(settings.copy(asr = it)) }
+                                AsrProvider.selectable.getOrNull(index)?.let { store.edit(settings.copy(asr = it)) }
                             },
                         )
                     }
@@ -111,7 +112,7 @@ internal fun SpeechRecognitionScreen(onBack: () -> Unit, onOpenOss: () -> Unit) 
                 } else {
                     SpeechNote(stringResource(R.string.speech_recognition_disabled_note))
                 }
-                SpeechSaveBlock(store) {
+                SpeechSaveBlock(store, persistCredentials = !settings.asr.isLocal) {
                     validateSpeechSettings(
                         store.settings,
                         store.credentials,
@@ -148,9 +149,9 @@ internal fun SpeechRecognitionScreen(onBack: () -> Unit, onOpenOss: () -> Unit) 
                                 OverlayDropdownPreference(
                                     title = stringResource(R.string.speech_service_and_model),
                                     items = asrLabels,
-                                    selectedIndex = settings.asr.ordinal,
+                                    selectedIndex = AsrProvider.selectable.indexOf(settings.asr.canonical),
                                     onSelectedIndexChange = { index ->
-                                        AsrProvider.entries.getOrNull(index)?.let { store.edit(settings.copy(asr = it)) }
+                                        AsrProvider.selectable.getOrNull(index)?.let { store.edit(settings.copy(asr = it)) }
                                     },
                                 )
                             }
@@ -196,7 +197,7 @@ internal fun SpeechRecognitionScreen(onBack: () -> Unit, onOpenOss: () -> Unit) 
                     }
                 }
                 item(key = "save") {
-                    SpeechSaveBlock(store) {
+                    SpeechSaveBlock(store, persistCredentials = !settings.asr.isLocal) {
                         validateSpeechSettings(store.settings, store.credentials, synthesis = false)
                     }
                 }
@@ -208,7 +209,11 @@ internal fun SpeechRecognitionScreen(onBack: () -> Unit, onOpenOss: () -> Unit) 
 @Composable
 private fun SpeechResultSection(store: SpeechSettingsStore) {
     val settings = store.settings
-    val streaming = settings.asr == AsrProvider.QWEN_REALTIME || settings.asr == AsrProvider.DOUBAO
+    val offline = settings.asr.isLocal
+    val streaming = when (settings.asr) {
+        AsrProvider.QWEN_REALTIME, AsrProvider.DOUBAO, AsrProvider.LOCAL, AsrProvider.SHERPA_NCNN, AsrProvider.QWEN3_LOCAL -> true
+        AsrProvider.MIMO, AsrProvider.QWEN_FLASH, AsrProvider.QWEN_FILE, AsrProvider.DEEPSEEK -> false
+    }
     val options = SpeechSettings.AUTO_SEND_SILENCE_OPTIONS
     val optionLabels = options.map { millis ->
         if (millis == 0) {
@@ -246,7 +251,9 @@ private fun SpeechResultSection(store: SpeechSettingsStore) {
                     )
                 }
             }
-            if (uiStyle == AppearanceUiStyle.COUI) {
+            if (offline) {
+                SpeechNote(stringResource(R.string.speech_asr_offline_refine))
+            } else if (uiStyle == AppearanceUiStyle.COUI) {
                 CouiSwitchPreference(
                     title = stringResource(R.string.speech_refine_title),
                     summary = stringResource(R.string.speech_refine_summary),

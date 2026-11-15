@@ -1518,4 +1518,14 @@
   <string name="assistant_overlay_settings_follow_primary_hint">Uses the default main conversation model</string>
   <string name="assistant_overlay_settings_reasoning_follow_default">Follow default</string>
   <string name="assistant_overlay_settings_note">Independently configure the model and reasoning level for the floating assistant triggered by the power key or system assistant. For quick everyday tasks, choosing a fast lightweight model with lower or disabled reasoning helps reduce latency and token usage.</string>
+    <string name="speech_tts_system">系统离线朗读</string>
+    <string name="speech_system_tts_note">只使用已安装且不需要网络的系统音色，不需要 API Key；缺少离线语言包时会提示，不自动下载或切换云端。此播放入口仅支持朗读和停止，不支持定位或暂停。</string>
+    <string name="speech_system_tts_engine">引擎包名（留空使用系统默认）</string>
+    <string name="speech_system_tts_language">离线音色语言（如 zh-CN；留空使用语音语言）</string>
+    <string name="speech_system_tts_rate">语速</string>
+    <string name="speech_system_tts_pitch">音调</string>
+    <string name="speech_system_tts_settings">打开系统文字转语音设置</string>
+    <string name="speech_system_tts_settings_missing">无法打开文字转语音设置，请在系统设置中搜索“文字转语音”并安装离线语言包</string>
+    <string name="speech_asr_local">本机离线</string>
+    <string name="speech_asr_note_local">仅在本机识别，无 API Key、云端回退或网络校对。需手动下载或导入模型；首次校验加载请等待。</string>
 </resources>

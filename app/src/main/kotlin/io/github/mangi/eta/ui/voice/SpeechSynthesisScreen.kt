@@ -35,7 +35,7 @@ import top.yukonga.miuix.kmp.theme.MiuixTheme
 internal fun SpeechSynthesisScreen(onBack: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val store = remember { SpeechSettingsStore(context, scope) }
+    val store = remember { SpeechSettingsStore(context, scope, synthesisOnly = true) }
     SpeechLifecycle { store.stop() }
     val settings = store.settings
     val ttsLabels = TtsProvider.entries.map { it.label() }
@@ -65,7 +65,7 @@ internal fun SpeechSynthesisScreen(onBack: () -> Unit) {
                     SpeechVoiceSection(store)
                     SpeechPreviewSection(store)
                 }
-                SpeechSaveBlock(store) {
+                SpeechSaveBlock(store, persistCredentials = store.settings.tts != TtsProvider.SYSTEM) {
                     if (store.settings.tts != TtsProvider.NONE) {
                         validateSpeechSettings(
                             store.settings,
@@ -112,7 +112,7 @@ internal fun SpeechSynthesisScreen(onBack: () -> Unit) {
                     }
                 }
                 item(key = "save") {
-                    SpeechSaveBlock(store) {
+                    SpeechSaveBlock(store, persistCredentials = store.settings.tts != TtsProvider.SYSTEM) {
                         if (store.settings.tts != TtsProvider.NONE) {
                             validateSpeechSettings(
                                 store.settings,

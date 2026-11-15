@@ -6,6 +6,7 @@ import io.github.mangi.eta.core.HookInstallation
 import io.github.mangi.eta.core.HookRegistrar
 import io.github.mangi.eta.core.ModuleConfig
 import io.github.mangi.eta.core.ModuleLogger
+import io.github.mangi.eta.core.safeStackTrace
 import io.github.mangi.eta.core.safeLogType
 
 import android.app.KeyguardManager
@@ -188,12 +189,25 @@ internal object AssistantManager {
             return false
         }
         val service = resolveVoiceInteractionService(logger, source, logFailures) ?: return false
+        // asInterface returns the package-private local Stub inside system_server (and a
+        // private Proxy outside it). Invoke the public Binder contract, not the concrete
+        // implementation: access checks can differ across framework/ROM versions.
+        val serviceMethods = runCatching {
+            Class.forName("com.android.internal.app.IVoiceInteractionManagerService").methods
+        }.getOrElse { throwable ->
+            logShowSessionFailure(
+                logger,
+                "${source}_voice_contract_missing",
+                logFailures,
+            ) { "$source: 无法解析 voiceinteraction 公共接口，${throwable.safeStackTrace()}" }
+            return false
+        }
 
         if (isKeyguardLocked(context)) {
-            val launchFromKeyguardMethod = service.javaClass.methods.firstOrNull {
+            val launchFromKeyguardMethod = serviceMethods.firstOrNull {
                 it.name == "launchVoiceAssistFromKeyguard" && it.parameterTypes.isEmpty()
             }
-            val supportsLaunchMethod = service.javaClass.methods.firstOrNull {
+            val supportsLaunchMethod = serviceMethods.firstOrNull {
                 it.name == "activeServiceSupportsLaunchFromKeyguard" && it.parameterTypes.isEmpty()
             }
             val supportsLaunch = runCatching {
@@ -212,14 +226,14 @@ internal object AssistantManager {
                         "${source}_launch_keyguard_failed",
                         logFailures
                     ) {
-                        "$source: launchVoiceAssistFromKeyguard 失败，type=${throwable.safeLogType()}"
+                        "$source: launchVoiceAssistFromKeyguard 失败，${throwable.safeStackTrace()}"
                     }
                     false
                 }
             }
         }
 
-        val showSessionMethod = service.javaClass.methods.firstOrNull {
+        val showSessionMethod = serviceMethods.firstOrNull {
             it.name == "showSessionForActiveService" && it.parameterTypes.size == 5
         }
         if (showSessionMethod == null) {
@@ -248,7 +262,7 @@ internal object AssistantManager {
                 "${source}_voice_service_failed",
                 logFailures
             ) {
-                "$source: 调用 showSessionForActiveService 失败，type=${throwable.safeLogType()}"
+                "$source: 调用 showSessionForActiveService 失败，${throwable.safeStackTrace()}"
             }
         }.getOrDefault(false).also { shown ->
             if (!shown) {
@@ -264,6 +278,16 @@ internal object AssistantManager {
     fun isAssistantConfigured(context: Context, target: PowerAssistantTarget): Boolean {
         val binding = assistantBindingFor(target) ?: return false
         return hasAssistantSettings(context, resolveCurrentUserId(), binding)
+    }
+
+    fun isAssistantConfiguredForUser(
+        context: Context,
+        target: PowerAssistantTarget,
+        userId: Int,
+    ): Boolean {
+        val binding = assistantBindingFor(target) ?: return false
+        return userId >= 0 && hasAssistantSettings(context, userId, binding) &&
+            hasAssistantRole(context, userId, binding)
     }
 
     fun rebuildVoiceInteractionImplementation(

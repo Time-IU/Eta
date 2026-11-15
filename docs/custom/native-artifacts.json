@@ -1,0 +1,61 @@
+{
+  "schemaVersion": 1,
+  "binary_source_claim": "See BUILD.md and THIRD_PARTY.md; not all historical third-party binaries have exact rebuild provenance",
+  "native_artifacts": [
+    {
+      "path": "app/src/main/jniLibs/arm64-v8a/libeta_transcribe_jni.so",
+      "bytes": 3739400,
+      "sha256": "cac5794d68efaf0f95efc2b2d5ccd4aecd071aabb0462890a458309e27ab2dfc",
+      "origin": "Locally built from vendored transcribe.cpp + Eta JNI integration",
+      "source_commit": "adfc50210a3f026a655a3e19937d90ef2bf0728c",
+      "source_directory": "app/src/main/cpp/local-speech",
+      "compiler": "Termux Clang 21.1.8; CPU armv8-a; C and C++ Release optimized; original artifact uses shared libc++",
+      "license": "MIT components; main-project integration under retained project licensing"
+    },
+    {
+      "path": "app/src/main/jniLibs/arm64-v8a/libc++_shared.so",
+      "bytes": 1423696,
+      "sha256": "05bef9d3901910c3ff8ab450b03bc8b28383d363a2290f2f7b9aed7331ea6ff7",
+      "origin": "Official Termux ARM64 libc++ package",
+      "license": "Apache-2.0 WITH LLVM-exception; see bundled LLVM license",
+      "source": "https://github.com/termux/termux-packages/tree/master/packages/libc%2B%2B"
+    },
+    {
+      "path": "app/src/main/jniLibs/arm64-v8a/libsherpa-onnx-jni.so",
+      "bytes": 4609320,
+      "sha256": "5db8f89f12b2c900a98c9e01e00c475c59db35e9437a62e36e27839ec48b5575",
+      "origin": "k2-fsa/sherpa-onnx v2.0.1 official Android release",
+      "source_commit": "af2d8d81dbfa61c4cea4c568da78f3982edca005",
+      "source": "https://github.com/k2-fsa/sherpa-onnx/tree/v2.0.1",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "app/src/main/jniLibs/arm64-v8a/libonnxruntime.so",
+      "bytes": 22249560,
+      "sha256": "33847ad43bffe204699fd4a27f7f3603452a8cdaf2f9a44983a0bc31ffcf2da1",
+      "origin": "Same official sherpa-onnx v2.0.1 Android archive",
+      "identified_runtime": "ONNX Runtime 1.28.2",
+      "source": "https://github.com/microsoft/onnxruntime/tree/v1.28.2",
+      "license": "MIT; see bundled third-party notices"
+    },
+    {
+      "path": "app/src/main/jniLibs/arm64-v8a/libsherpa-ncnn-jni.so",
+      "bytes": 892600,
+      "sha256": "b029ace14714523d8b701df11dd66f76c2f6c1213cbf8b0494c741c2a9f0612b",
+      "origin": "Precompiled arm64 entry in user-provided ZorvAI-v1.2.4.apk",
+      "reference_apk_sha256": "924f3a31aee7861bc320a5fbae3b556790934c3080218fda2a6e65db4b888374",
+      "source": "https://github.com/k2-fsa/sherpa-ncnn",
+      "license": "Apache-2.0",
+      "exact_native_commit_and_build_flags": "not supplied by reference APK; not reconstructed"
+    },
+    {
+      "path": "app/src/main/jniLibs/arm64-v8a/libncnn.so",
+      "bytes": 4581184,
+      "sha256": "6f2a42d3acb6a5dd1677e458763bb45854d92efe036fd641a7cf5718d56c93d1",
+      "origin": "Precompiled arm64 entry in same ZorvAI-v1.2.4.apk",
+      "source": "https://github.com/Tencent/ncnn",
+      "license": "BSD-3-Clause",
+      "exact_native_commit_and_build_flags": "not supplied by reference APK; not reconstructed"
+    }
+  ]
+}

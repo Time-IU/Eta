@@ -40,6 +40,7 @@ import top.yukonga.miuix.kmp.theme.MiuixTheme
 internal fun SpeechConnectionSection(store: SpeechSettingsStore, synthesis: Boolean) {
     if (!synthesis) {
         when (store.settings.asr) {
+            AsrProvider.LOCAL, AsrProvider.QWEN3_LOCAL, AsrProvider.SHERPA_NCNN -> LocalSpeechConnectionSection(store)
             AsrProvider.MIMO -> MimoAsrConnectionSection(store)
             AsrProvider.DEEPSEEK -> DeepSeekAsrConnectionSection(store)
             AsrProvider.QWEN_REALTIME, AsrProvider.QWEN_FLASH, AsrProvider.QWEN_FILE, AsrProvider.DOUBAO ->
@@ -48,7 +49,7 @@ internal fun SpeechConnectionSection(store: SpeechSettingsStore, synthesis: Bool
         return
     }
     when (store.settings.tts) {
-        TtsProvider.NONE -> Unit
+        TtsProvider.NONE, TtsProvider.SYSTEM -> Unit
         TtsProvider.QWEN, TtsProvider.DOUBAO -> QwenDoubaoConnectionSection(store, synthesis = true)
         TtsProvider.GEMINI -> GeminiConnectionSection(store)
         TtsProvider.MINIMAX -> MiniMaxConnectionSection(store)

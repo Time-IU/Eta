@@ -323,8 +323,22 @@ private fun SettingsPageContent(
                     value = target.persistedValue,
                 )
             ) {
-                powerAssistantTarget = target
-                enhancementHistory.recordCommittedTarget(target)
+                // RemotePreferences commit is only a stored Hook target, not evidence
+                // that the OEM power gesture reached or successfully launched Eta.
+                val committedTarget = Prefs.powerAssistantTarget(targetPrefs)
+                powerAssistantTarget = committedTarget
+                if (committedTarget == target) {
+                    enhancementHistory.recordCommittedTarget(committedTarget)
+                }
+                Toast.makeText(
+                    context.applicationContext,
+                    if (committedTarget == target) {
+                        "已保存接管目标；默认助理生效不等于电源路由成功。请手动长按电源键验证；若仍打开小布，请检查 LSPosed 的 system 作用域与 Power 日志。"
+                    } else {
+                        context.getString(R.string.settings_write_failed)
+                    },
+                    Toast.LENGTH_LONG,
+                ).show()
             } else {
                 Toast.makeText(
                     context.applicationContext,

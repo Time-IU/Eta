@@ -25,6 +25,8 @@ internal class AgentAppViewModel(application: Application) : AndroidViewModel(ap
         context = application,
         scope = viewModelScope,
     )
+    /** Continue transactions survive disposal of the source conversation composition. */
+    internal val continueScope: kotlinx.coroutines.CoroutineScope get() = viewModelScope
     val skills = AgentSkillsStore(application, viewModelScope)
     val memory = AgentMemoryStore(application, viewModelScope)
     val permissionHealth = PermissionHealthStore(application, viewModelScope)

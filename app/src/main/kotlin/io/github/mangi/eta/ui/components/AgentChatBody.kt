@@ -1,5 +1,12 @@
 package io.github.mangi.eta.ui.components
 
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.foundation.text.input.rememberTextFieldState
+import io.github.mangi.eta.ui.components.custom.LocalCustomComposer
+import io.github.mangi.eta.ui.components.custom.LocalCustomContinue
+import io.github.mangi.eta.ui.components.custom.rememberCustomContinue
+import io.github.mangi.eta.ui.components.custom.CustomContinueDialogs
+
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
@@ -239,76 +246,84 @@ internal fun AgentChatBody(
         }
     }
 
-    SpeechPlaybackHost {
-        SpeechAutoReadAloud(messages = messages, isStreaming = isStreaming)
-        AgentChatScaffold(
-            visibleMessages = visibleMessages,
-            hasMessages = visibleMessages.isNotEmpty() || hasEarlierMessages,
-            scrollState = scrollState,
-            input = input,
-            modelPickerState = modelPickerState,
-            isCompacting = isCompacting,
-            isBranching = isBranching,
-            contextUsage = contextUsage,
-            isStreaming = isStreaming,
-            reasoningEffort = reasoningEffort,
-            availableReasoningEfforts = availableReasoningEfforts,
-            pendingImages = pendingImages,
-            pendingFileReferences = pendingFileReferences,
-            queuedMessages = queuedMessages,
-            inputSyncVersion = inputSyncVersion,
-            focusInputOnSync = focusInputOnSync,
-            messageEdit = messageEdit,
-            showEmptySuggestions = !isKeyboardVisible,
-            keepBottomAnchored = keepBottomAnchored,
-            onBottomAnchorChanged = { keepBottomAnchored = it },
-            onSubmit = { text ->
-                sentFromKeyboard = true
-                // 发送即重新锚定底部：用户从历史上方直接发送时，同帧内 isStreaming 与
-                // 新消息一起到位，立即回到底部并恢复后续的流式平滑跟底。
-                keepBottomAnchored = true
-                onSubmit(text)
-            },
-            onInterruptAndSubmit = { text ->
-                sentFromKeyboard = true
-                keepBottomAnchored = true
-                onInterruptAndSubmit(text)
-            },
-            onSteerQueuedMessage = { id ->
-                keepBottomAnchored = true
-                onSteerQueuedMessage(id)
-            },
-            onRecallQueuedMessage = onRecallQueuedMessage,
-            onRemoveQueuedMessage = onRemoveQueuedMessage,
-            onReasoningEffortChange = onReasoningEffortChange,
-            onCompactContext = onCompactContext,
-            canCompactContext = canCompactContext,
-            onModelSelected = onModelSelected,
-            onStop = onStop,
-            onAttachImage = onAttachImage,
-            onRemoveImage = onRemoveImage,
-            onAttachFiles = onAttachFiles,
-            onAttachFolder = onAttachFolder,
-            onAttachFilePath = onAttachFilePath,
-            onRemoveFileReference = onRemoveFileReference,
-            onEditMessage = onEditMessage,
-            onCancelMessageEdit = onCancelMessageEdit,
-            onDeleteMessage = onDeleteMessage,
-            onRegenerateMessage = onRegenerateMessage,
-            onBranchMessage = onBranchMessage,
-            onSelectReplyCandidate = onSelectReplyCandidate,
-            onSuggestionClick = onSuggestionClick,
-            onRunTraceClick = onRunTraceClick,
-            onOpenBrowser = onOpenBrowser,
-            currentBrowserMessageId = currentBrowserMessageId,
-            hasEarlierMessages = hasEarlierMessages,
-            messageStartIndex = messageStartIndex,
-            historyLoadState = historyLoadState,
-            onLoadEarlierMessages = onLoadEarlierMessages,
-            onHistoryViewportChanged = onHistoryViewportChanged,
-            topInset = topInset,
-            modifier = modifier,
-        )
+    val customComposer = rememberTextFieldState(initialText = input)
+    val customContinue = rememberCustomContinue(customComposer)
+    CompositionLocalProvider(
+        LocalCustomComposer provides customComposer,
+        LocalCustomContinue provides customContinue,
+    ) {
+        CustomContinueDialogs(customContinue)
+        SpeechPlaybackHost {
+            SpeechAutoReadAloud(messages = messages, isStreaming = isStreaming)
+            AgentChatScaffold(
+                visibleMessages = visibleMessages,
+                hasMessages = visibleMessages.isNotEmpty() || hasEarlierMessages,
+                scrollState = scrollState,
+                input = input,
+                modelPickerState = modelPickerState,
+                isCompacting = isCompacting,
+                isBranching = isBranching,
+                contextUsage = contextUsage,
+                isStreaming = isStreaming,
+                reasoningEffort = reasoningEffort,
+                availableReasoningEfforts = availableReasoningEfforts,
+                pendingImages = pendingImages,
+                pendingFileReferences = pendingFileReferences,
+                queuedMessages = queuedMessages,
+                inputSyncVersion = inputSyncVersion,
+                focusInputOnSync = focusInputOnSync,
+                messageEdit = messageEdit,
+                showEmptySuggestions = !isKeyboardVisible,
+                keepBottomAnchored = keepBottomAnchored,
+                onBottomAnchorChanged = { keepBottomAnchored = it },
+                onSubmit = { text ->
+                    sentFromKeyboard = true
+                    // 发送即重新锚定底部：用户从历史上方直接发送时，同帧内 isStreaming 与
+                    // 新消息一起到位，立即回到底部并恢复后续的流式平滑跟底。
+                    keepBottomAnchored = true
+                    onSubmit(text)
+                },
+                onInterruptAndSubmit = { text ->
+                    sentFromKeyboard = true
+                    keepBottomAnchored = true
+                    onInterruptAndSubmit(text)
+                },
+                onSteerQueuedMessage = { id ->
+                    keepBottomAnchored = true
+                    onSteerQueuedMessage(id)
+                },
+                onRecallQueuedMessage = onRecallQueuedMessage,
+                onRemoveQueuedMessage = onRemoveQueuedMessage,
+                onReasoningEffortChange = onReasoningEffortChange,
+                onCompactContext = onCompactContext,
+                canCompactContext = canCompactContext,
+                onModelSelected = onModelSelected,
+                onStop = onStop,
+                onAttachImage = onAttachImage,
+                onRemoveImage = onRemoveImage,
+                onAttachFiles = onAttachFiles,
+                onAttachFolder = onAttachFolder,
+                onAttachFilePath = onAttachFilePath,
+                onRemoveFileReference = onRemoveFileReference,
+                onEditMessage = onEditMessage,
+                onCancelMessageEdit = onCancelMessageEdit,
+                onDeleteMessage = onDeleteMessage,
+                onRegenerateMessage = onRegenerateMessage,
+                onBranchMessage = onBranchMessage,
+                onSelectReplyCandidate = onSelectReplyCandidate,
+                onSuggestionClick = onSuggestionClick,
+                onRunTraceClick = onRunTraceClick,
+                onOpenBrowser = onOpenBrowser,
+                currentBrowserMessageId = currentBrowserMessageId,
+                hasEarlierMessages = hasEarlierMessages,
+                messageStartIndex = messageStartIndex,
+                historyLoadState = historyLoadState,
+                onLoadEarlierMessages = onLoadEarlierMessages,
+                onHistoryViewportChanged = onHistoryViewportChanged,
+                topInset = topInset,
+                modifier = modifier,
+            )
+        }
     }
 }
 

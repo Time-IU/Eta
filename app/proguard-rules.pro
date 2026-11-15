@@ -70,3 +70,12 @@
 -keep class io.github.mangi.eta.agent.virtualdisplay.VirtualDisplayCommandMain {
     public static void main(java.lang.String[]);
 }
+
+# Sherpa JNI uses fixed package names and reflected field descriptors.
+-keep class com.k2fsa.sherpa.ncnn.** { *; }
+
+# Pinned sherpa-onnx v2.0.1 JNI FindClass/GetFieldID ABI.
+-keep class com.k2fsa.sherpa.onnx.** { *; }
+
+# GGUF JNI names are a stable native ABI.
+-keep class io.github.mangi.eta.agent.voice.local.GgufSpeechNative { *; }

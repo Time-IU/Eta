@@ -1009,6 +1009,54 @@ internal class AgentAppState(
         }
     }
 
+    /**
+     * Quote-only continuation. State owns the save barrier and destination sync; callers must
+     * never clear a composer or create a conversation before this suspending operation succeeds.
+     * Native assistant branches deliberately remain on branchConversation's existing path.
+     */
+    suspend fun continueFromQuote(
+        sourceId: String,
+        selectedText: String,
+        draft: String,
+        expectedConversationId: String,
+        sourceStillCurrent: () -> Boolean = { true },
+    ): Boolean = withContext(Dispatchers.Main.immediate) {
+        fun available(): Boolean = selectedConversationId == expectedConversationId &&
+            !persistencePaused && !isLoadingConversation && homeState.isConversationLoaded &&
+            !homeState.isStreaming && !homeState.isCompacting && homeState.messageEdit == null &&
+            homeState.roleplayMessages.pendingRewrites.isEmpty() &&
+            runStore.activeRunId(expectedConversationId) == null &&
+            expectedConversationId !in pendingConversationDeletes
+        if (selectedText.isBlank() || branchingConversationId != null || !available() ||
+            !sourceStillCurrent()) return@withContext false
+        val source = homeState.messages.singleOrNull { it.id == sourceId }
+        if (source !is UserMessageUi && source !is AgentMessageUi) return@withContext false
+        // SelectionContainer exposes rendered plain text (possibly spanning Markdown markers),
+        // so raw-source substring matching would incorrectly reject legitimate selections.
+        val selectionVersion = conversationSelectionVersion
+        branchingConversationId = expectedConversationId
+        try {
+            updateCurrentConversation(homeState.copy(input = draft), updateTimestamp = false)
+            val savedSource = homeState
+            if (!persistConversations().await()) return@withContext false
+            // Await yields: navigation, edits, run startup or a newer local draft abort, never reset.
+            if (!available() || conversationSelectionVersion != selectionVersion ||
+                homeState !== savedSource || !sourceStillCurrent()) return@withContext false
+            val quote = io.github.mangi.eta.ui.components.custom.quoteWithDraft(selectedText, "")
+            // This Main block contains no suspension: the re-keyed target composer is born with
+            // its quote, and inputSyncVersion covers same-composition consumers without a timer.
+            createConversation()
+            homeState = homeState.copy(
+                input = quote,
+                inputSyncVersion = savedSource.inputSyncVersion + 1,
+                focusInputOnSync = true,
+            )
+            true
+        } finally {
+            branchingConversationId = null
+        }
+    }
+
     fun createConversation() {
         conversationSelectionVersion += 1
         cancelHistoryPageLoad()

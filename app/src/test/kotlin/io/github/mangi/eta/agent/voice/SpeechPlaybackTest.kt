@@ -199,6 +199,52 @@ class SpeechPlaybackTest {
         } finally { controller.stop() }
     }
 
+    @Test fun deepseekMarkdownToggleAppliesToBothSessionAndSegmentPlayback() {
+        val markdown = "# Heading\n\nRead [help](https://example.invalid/help)."
+        for (filter in listOf(true, false)) for (streaming in listOf(true, false)) {
+            val output = FakeOutput()
+            val submitted = java.util.concurrent.CopyOnWriteArrayList<String>()
+            var sessions = 0
+            var segments = 0
+            val controller = SpeechPlaybackController(context, scope,
+                streamSynthesize = if (streaming) { config, secrets, chunks, audio ->
+                    assertEquals(TtsProvider.DEEPSEEK, config.tts)
+                    assertEquals("fixture-deepseek-key", secrets.deepseekTts)
+                    assertEquals(filter, config.deepseekTts.filterMarkdown)
+                    sessions++
+                    submitted.addAll(chunks)
+                    audio(byteArrayOf(1, 2))
+                } else null,
+                synthesize = { config, secrets, text, audio ->
+                    assertEquals(TtsProvider.DEEPSEEK, config.tts)
+                    assertEquals("fixture-deepseek-key", secrets.deepseekTts)
+                    assertEquals(filter, config.deepseekTts.filterMarkdown)
+                    segments++
+                    submitted += text
+                    audio(byteArrayOf(1, 2))
+                },
+                createOutput = { output },
+            )
+            try {
+                val config = SpeechSettings(tts = TtsProvider.DEEPSEEK,
+                    deepseekTts = io.github.mangi.eta.data.model.DeepSeekTtsConfig(filterMarkdown = filter))
+                controller.speak("deepseek", markdown, config,
+                    SpeechCredentials(deepseekTts = "fixture-deepseek-key"))
+                val deadline = System.nanoTime() + 3_000_000_000
+                while (!output.closed && System.nanoTime() < deadline) {
+                    shadowOf(Looper.getMainLooper()).idle()
+                    Thread.sleep(1)
+                }
+                assertNull(controller.state.value.error)
+                assertTrue(output.finished)
+                assertEquals(if (streaming) 1 else 0, sessions)
+                assertEquals(if (streaming) 0 else 1, segments)
+                val expected = if (filter) SpeechText.readable(markdown) else markdown.trim()
+                assertEquals(SpeechText.chunks(expected), submitted)
+            } finally { controller.stop() }
+        }
+    }
+
     @Test fun streamingFailureBeforeAudioFallsBackToSegments() {
         val output = FakeOutput()
         val segments = java.util.concurrent.atomic.AtomicInteger()

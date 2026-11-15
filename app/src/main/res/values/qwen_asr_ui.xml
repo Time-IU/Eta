@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="speech_asr_qwen3_local">Qwen3 离线</string>
+    <string name="speech_asr_note_qwen3_local">单次录音最长 30 秒；说完识别，非实时逐字。停止后离线解码，内部每段不超过 10 秒。首次校验/加载较慢，请等待；原生进程测试内存约 1.5 GiB，实际占用因设备而异。不上传音频、不云端校对、不自动回退云端。</string>
+</resources>

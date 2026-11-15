@@ -20,6 +20,7 @@ import top.yukonga.miuix.kmp.preference.OverlaySpinnerPreference
 internal fun SpeechVoiceSection(store: SpeechSettingsStore) {
     val settings = store.settings
     val voice = when (settings.tts) {
+        TtsProvider.SYSTEM -> { SystemTtsSettingsSection(store); return }
         TtsProvider.NONE -> return
         TtsProvider.QWEN -> settings.qwenVoice
         TtsProvider.DOUBAO -> settings.doubaoVoice
@@ -35,7 +36,7 @@ internal fun SpeechVoiceSection(store: SpeechSettingsStore) {
     val change: (String) -> Unit = {
         store.edit(
             when (settings.tts) {
-                TtsProvider.NONE -> settings
+                TtsProvider.NONE, TtsProvider.SYSTEM -> settings
                 TtsProvider.QWEN -> settings.copy(qwenVoice = it)
                 TtsProvider.DOUBAO -> settings.copy(doubaoVoice = it)
                 TtsProvider.GEMINI -> settings.copy(geminiTts = settings.geminiTts.copy(voice = it))
@@ -105,7 +106,7 @@ internal fun SpeechVoiceSection(store: SpeechSettingsStore) {
                     TtsProvider.MINIMAX -> R.string.speech_minimax_voice_note
                     TtsProvider.MIMO -> R.string.speech_mimo_voice_note
                     TtsProvider.DEEPSEEK -> R.string.speech_deepseek_voice_note
-                    TtsProvider.NONE -> error("No synthesis provider")
+                    TtsProvider.NONE, TtsProvider.SYSTEM -> error("No cloud synthesis provider")
                 },
             ),
         )

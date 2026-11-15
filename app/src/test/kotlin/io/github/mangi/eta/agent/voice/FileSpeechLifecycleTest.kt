@@ -94,6 +94,25 @@ class FileSpeechLifecycleTest {
         assertTrue(captures.single().canceled)
     }
 
+    @Test fun deepseekUsesItsOwnFileConfigurationAndCredentials() {
+        val config = settings.copy(asr = AsrProvider.DEEPSEEK,
+            deepseekAsr = io.github.mangi.eta.data.model.DeepSeekAsrConfig("https://asr.example.test"))
+        val secrets = SpeechCredentials(deepseekAsr = "fixture-deepseek-key")
+        controller.start(config, secrets)
+        idle()
+        assertEquals(EtaSpeechPhase.LISTENING, controller.state.value.phase)
+        assertTrue(requests.isEmpty())
+        controller.finish()
+        idle()
+        val request = requests.single()
+        assertSame(config, request.settings)
+        assertSame(secrets, request.credentials)
+        assertEquals("RIFF", request.wav.copyOfRange(0, 4).toString(Charsets.US_ASCII))
+        request.result.complete("DeepSeek 文件识别结果")
+        idle()
+        assertEquals(listOf("DeepSeek 文件识别结果"), results)
+    }
+
     @Test fun cancelingRecordingDoesNotSubmitAudio() {
         start()
         controller.cancel()
@@ -146,6 +165,62 @@ class FileSpeechLifecycleTest {
         assertFalse(controller.state.value.active)
     }
 
+    @Test fun everyFileProviderAutomaticallyFinishesOnCapturePauseAndReleasesBeforeDecode() {
+        for (provider in listOf(AsrProvider.MIMO, AsrProvider.QWEN_FLASH, AsrProvider.QWEN_FILE, AsrProvider.DEEPSEEK)) {
+            val expectedCaptureCount = captures.size + 1
+            // Unlike the MIMO-only fixture above, these routes validate Qwen URLs and OSS.
+            // All recognition is injected; these reserved-domain settings never open a network.
+            controller.start(settings.copy(asr = provider, autoSendSilenceMs = 2000, refineTranscript = false,
+                qwenAsr = QwenSpeechConfig(baseUrl = "https://asr.example.test"),
+                oss = settings.oss.copy(bucket = "fixture-bucket")),
+                SpeechCredentials(mimoAsr = "fixture", qwenAsr = "fixture", deepseekAsr = "fixture",
+                    ossAccessKeyId = "fixture-id", ossAccessKeySecret = "fixture-secret"))
+            idle()
+            assertNull("Valid synthetic configuration for $provider", controller.state.value.error)
+            assertEquals(expectedCaptureCount, captures.size)
+            assertEquals(EtaSpeechPhase.LISTENING, controller.state.value.phase)
+            val capture = captures.last()
+            // FakeCapture's initial two samples shift the 20ms analysis windows. Supply one
+            // complete extra window, not a timer/sleep: production capture keeps delivering PCM.
+            val pcm = endpointPcm(0, 200) + endpointPcm(2500, 400) + endpointPcm(0, 2020)
+            for (frame in pcm.asList().chunked(SpeechRecorder.FRAME_BYTES)) {
+                capture.frames.trySend(frame.toByteArray()).getOrThrow()
+                idle()
+            }
+            assertTrue("Capture must finish for $provider", capture.finished)
+            assertEquals("Exactly one file request per provider", captures.size, requests.size)
+            val request = requests.last()
+            assertEquals(provider, request.settings.asr)
+            assertTrue(capture.released)
+            assertArrayEquals(byteArrayOf(1, 2, 3, 4) + pcm, request.wav.copyOfRange(44, request.wav.size))
+            request.result.complete("识别结果")
+            idle()
+            assertEquals(listOf("识别结果"), results)
+            assertFalse(controller.state.value.active)
+            results.clear()
+        }
+        assertEquals(4, requests.size)
+    }
+
+    @Test fun holdAndDisabledEndpointKeepFileCaptureManual() {
+        for ((hold, silence) in listOf(true to 2000, false to 0)) {
+            controller.start(settings.copy(autoSendSilenceMs = silence), credentials, holdToTalk = hold)
+            idle()
+            val capture = captures.last()
+            capture.frames.trySend(endpointPcm(0, 200) + endpointPcm(2500, 400) + endpointPcm(0, 4000)).getOrThrow()
+            idle()
+            assertFalse(capture.finished)
+            assertTrue(requests.isEmpty())
+            controller.finish()
+            idle()
+            assertTrue(capture.released)
+            assertEquals(1, requests.size)
+            controller.cancel()
+            idle()
+            requests.clear()
+        }
+    }
+
     private fun start() {
         controller.start(settings, credentials)
         idle()
@@ -168,6 +243,7 @@ class FileSpeechLifecycleTest {
         private val stopped = CompletableDeferred<Unit>()
         var finished = false
         var canceled = false
+        var released = false
 
         override suspend fun record(onReady: () -> Unit, onLevel: (Float) -> Unit) {
             try {
@@ -175,6 +251,7 @@ class FileSpeechLifecycleTest {
                 frames.send(byteArrayOf(1, 2, 3, 4))
                 stopped.await()
             } finally {
+                released = true
                 frames.close()
             }
         }

@@ -1,5 +1,7 @@
 package io.github.mangi.eta.ui.components
 
+import io.github.mangi.eta.ui.components.custom.LocalCustomComposer
+
 import io.github.mangi.eta.ui.voice.SpeechDictationButton
 import io.github.mangi.eta.ui.voice.SpeechInputFeedback
 import io.github.mangi.eta.ui.voice.rememberSpeechInput
@@ -173,7 +175,7 @@ internal fun AgentChatInputBar(
     val keyboard = LocalSoftwareKeyboardController.current
     val hapticFeedback = LocalHapticFeedback.current
     val focusRequester = remember { FocusRequester() }
-    val textFieldState = rememberTextFieldState(initialText = input)
+    val textFieldState = LocalCustomComposer.current ?: rememberTextFieldState(initialText = input)
     val speechSettings by remember { SpeechSettingsRepository.settingsFlow() }.collectAsState(initial = null)
     val recognitionEnabled = speechSettings?.recognitionEnabled == true
     val dictation = rememberSpeechInput { recognized ->

@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="speech_asr_sherpa_ncnn">本机离线</string>
+    <string name="speech_asr_note_offline">Sherpa NCNN · 中英双语 · CPU 本机推理 · 无需 Key。模型需手动下载或导入；未安装或损坏时无法离线识别。在线识别服务仍可切换使用，不会自动回退，也不会在识别时下载。</string>
+    <string name="speech_asr_offline_refine">仅此引擎：始终忽略「识别结果校对」，不调用对话模型联网校对。切换回在线引擎后，原有校对偏好仍保留。语音转文字离线不代表后续助手对话也离线。</string>
+    <string name="speech_asr_use_offline">保存为本机离线</string>
+    <string name="speech_asr_offline_model">离线识别模型</string>
+    <string name="speech_asr_offline_summary_loading">正在读取模型清单…</string>
+    <string name="speech_asr_offline_summary_error">模型状态暂不可读；请刷新检查。离线模型不可用时仍可选择在线服务，不会自动回退。</string>
+    <string name="speech_asr_model_manager">离线模型管理</string>
+    <string name="speech_asr_model_active">当前已选识别模型：%1$s\n状态：%2$s</string>
+    <string name="speech_asr_model_target">安装目标</string>
+    <string name="speech_asr_model_target_status">待管理模型：%1$s\n状态：%2$s\n此下拉仅选择安装目标，不更改识别模型。</string>
+    <string name="speech_asr_model_missing">未安装</string>
+    <string name="speech_asr_model_ready">已就绪</string>
+    <string name="speech_asr_model_invalid">损坏</string>
+    <string name="speech_asr_model_unchecked">尚未检查</string>
+    <string name="speech_asr_model_unavailable">当前已选模型不可用，无法离线识别。请安装此模型，或安装并使用另一档；在线服务仍可用。</string>
+    <string name="speech_asr_model_size">模型文件：%1$s MiB\n精确大小：%2$d B（不含 ZIP 元数据）</string>
+    <string name="speech_asr_model_format">语言：中文 / English\n格式：NCNN param + bin + tokens\n采样率：%1$d Hz · 特征维度：%2$d\n解码：CPU · greedy</string>
+    <string name="speech_asr_model_license">模型许可：%1$s</string>
+    <string name="speech_asr_model_native_note">已就绪表示文件大小、SHA-256 和格式验证通过，不等于已在此设备完成 native 推理实测。本页不会自动测试麦克风。</string>
+    <string name="speech_asr_model_download">下载模型</string>
+    <string name="speech_asr_model_import">导入 ZIP</string>
+    <string name="speech_asr_model_use">使用此模型</string>
+    <string name="speech_asr_model_refresh">刷新并校验状态</string>
+    <string name="speech_asr_model_cancel">取消当前操作</string>
+    <string name="speech_asr_model_checking">正在读取并校验模型，请稍候…</string>
+    <string name="speech_asr_model_downloading">正在下载模型…</string>
+    <string name="speech_asr_model_importing">正在导入模型…</string>
+    <string name="speech_asr_model_saving">正在保存模型选择…</string>
+    <string name="speech_asr_model_progress">%1$d / %2$d B\n进度：%3$s%%（仅模型文件）</string>
+    <string name="speech_asr_model_verifying">文件读取完成，正在校验并提交安装；尚未确认安装成功。</string>
+    <string name="speech_asr_model_installed">模型文件已就绪。点击「使用此模型」确认识别选择；安装本身不更改选择。</string>
+    <string name="speech_asr_model_selected">模型选择已确认保存。仅下一次开始识别生效，当前录音不变。</string>
+    <string name="speech_asr_model_selection_uncertain">模型选择未确认持久化：内存选择可能已改变，不能视为已保存。请点击「使用此模型」重试；当前录音不受此操作影响。</string>
+    <string name="speech_asr_model_cancelled">操作已取消，不支持断点续传；可重试下载 / 导入，或刷新检查安装状态。</string>
+    <string name="speech_asr_model_operation_failed">操作失败，未确认完成。请检查网络、存储空间或 ZIP 是否匹配所选档位，再重试；也可刷新校验状态。现有模型文件会保留。</string>
+    <string name="speech_asr_model_picker_failed">无法打开文件选择器，请重试或检查系统文档服务。</string>
+    <string name="speech_asr_model_invalid_note">损坏文件会保留；当前管理器不会覆盖、删除或自动修复。重复下载 / 导入不能修复现有目录，请先处理已有文件再刷新；也可选择另一档或在线服务。</string>
+    <string name="speech_asr_model_choice_note">Small 占用较少；Standard 加载、内存和计算开销更高。尚无 CER / WER 对比，不承诺更准。切换目标不保存；「使用」只影响下一次识别，不重载当前录音。切换到本机离线保留在线服务密钥。</string>
+    <string name="speech_asr_model_zip_note">ZIP 仅支持所选 Small / Standard 的已知 SHA-256 NCNN 包。七个模型文件必须位于同一目录，可放在 ZIP 根目录或最多两层包装目录内。可选元数据仅 README.md、LICENSE、NOTICE.md、manifest.json（有大小限制）；不接受其它模型文件。</string>
+    <string name="speech_asr_model_zip_files">必需的七个文件：\nencoder_jit_trace-pnnx.ncnn.param\nencoder_jit_trace-pnnx.ncnn.bin\ndecoder_jit_trace-pnnx.ncnn.param\ndecoder_jit_trace-pnnx.ncnn.bin\njoiner_jit_trace-pnnx.ncnn.param\njoiner_jit_trace-pnnx.ncnn.bin\ntokens.txt</string>
+    <string name="speech_asr_model_unsupported">更多模型：当前引擎不支持，不可导入。ONNX、Qwen、SenseVoice、safetensors 均不兼容；这里不提供对应下载选项。</string>
+</resources>

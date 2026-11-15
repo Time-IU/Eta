@@ -1,0 +1,3 @@
+transcribe.cpp https://github.com/handy-computer/transcribe.cpp commit adfc50210a3f026a655a3e19937d90ef2bf0728c
+Vendored ggml and miniz: see upstream THIRD-PARTY-LICENSES.md.
+Runtime MIT is independent from model licenses. Model weights are not included in APK. SenseVoice model license is FunASR Model Open Source License Agreement, not MIT or Apache.

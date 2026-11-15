@@ -45,8 +45,18 @@ internal object SettingsDataStore {
     fun speechSettingsFlow(): Flow<SpeechSettings> {
         ensureInitialized()
         return dataStore.data.map { prefs ->
-            prefs[SPEECH_SETTINGS]?.let { speechJson.decodeFromString<SpeechSettings>(it) }
-                ?: SpeechSettings()
+            val raw = prefs[SPEECH_SETTINGS]
+            val decoded = raw?.let { speechJson.decodeFromString<SpeechSettings>(it) } ?: SpeechSettings()
+            val normalized = decoded.canonicalized()
+            if (raw != null && decoded.asr != normalized.asr) {
+                // Compare-and-edit avoids overwriting a concurrent settings save. Never opens secrets.
+                dataStore.edit { current ->
+                    if (current[SPEECH_SETTINGS] == raw) {
+                        migratedLocalAsrJson(speechJson, raw)?.let { current[SPEECH_SETTINGS] = it }
+                    }
+                }
+            }
+            normalized
         }
     }
 
@@ -54,7 +64,7 @@ internal object SettingsDataStore {
 
     suspend fun setSpeechSettings(settings: SpeechSettings) {
         ensureInitialized()
-        dataStore.edit { it[SPEECH_SETTINGS] = speechJson.encodeToString(settings) }
+        dataStore.edit { it[SPEECH_SETTINGS] = speechJson.encodeToString(settings.canonicalized()) }
     }
 
     fun webToolsSettingsFlow(): Flow<WebToolsSettings> {

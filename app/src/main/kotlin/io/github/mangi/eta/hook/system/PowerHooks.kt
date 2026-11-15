@@ -1,5 +1,7 @@
 package io.github.mangi.eta.hook.system
 
+import io.github.mangi.eta.core.assistantEntryUserId
+import io.github.mangi.eta.core.withAssistantCallingIdentity
 import io.github.mangi.eta.core.HookSupport
 import io.github.mangi.eta.core.HookInstallation
 import io.github.mangi.eta.core.HookRegistrar
@@ -7,8 +9,11 @@ import io.github.mangi.eta.core.ModuleConfig
 import io.github.mangi.eta.core.ModuleLogger
 import io.github.mangi.eta.core.safeLogType
 
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.os.Binder
+import android.os.UserHandle
 import android.os.Handler
 import android.os.Message
 import android.os.SystemClock
@@ -147,13 +152,30 @@ internal object PowerHooks {
             return LaunchResult.LAUNCHED
         }
 
-        if (AssistantManager.showAssistantSession(
+        val requestSession = {
+            AssistantManager.showAssistantSession(
                 context = context,
                 target = target,
                 logger = logger,
                 source = source,
-                logFailures = false
-            )) {
+                logFailures = true,
+            )
+        }
+        val sessionRequested = if (target == PowerAssistantTarget.ETA) {
+            runCatching {
+                withAssistantCallingIdentity(Binder::clearCallingIdentity, Binder::restoreCallingIdentity) {
+                    requestSession()
+                }
+            }.getOrElse { throwable ->
+                logger.warnThrottled("${source}_eta_session_request_failed") {
+                    "$source: Eta 会话请求失败，type=${throwable.safeLogType()}"
+                }
+                false
+            }
+        } else {
+            requestSession()
+        }
+        if (sessionRequested) {
             finalizeSuccessfulLaunch(logger, phoneWindowManager, source, now)
             logger.debug { "$source: 已通过 voiceinteraction 启动 ${binding.displayName}" }
             return LaunchResult.LAUNCHED
@@ -191,20 +213,42 @@ internal object PowerHooks {
                 now = now,
                 action = Intent.ACTION_VOICE_COMMAND,
             )
-            PowerAssistantTarget.ETA -> {
-                if (!AssistantManager.isAssistantConfigured(context, target)) {
-                    false
-                } else {
-                    startAssistantActivity(
-                        context = context,
-                        binding = binding,
-                        logger = logger,
-                        phoneWindowManager = phoneWindowManager,
-                        source = source,
-                        now = now,
-                        action = Intent.ACTION_ASSIST,
-                    )
+            PowerAssistantTarget.ETA -> runCatching {
+                withAssistantCallingIdentity(Binder::clearCallingIdentity, Binder::restoreCallingIdentity) {
+                    val userId = assistantEntryUserId {
+                        Class.forName("android.app.ActivityManager")
+                            .getDeclaredMethod("getCurrentUser").invoke(null) as Int
+                    }
+                    if (Prefs.powerAssistantTarget() != PowerAssistantTarget.ETA ||
+                        !AssistantManager.isAssistantConfiguredForUser(context, target, userId)
+                    ) {
+                        false
+                    } else {
+                        val user = UserHandle::class.java.getDeclaredMethod(
+                            "of", Int::class.javaPrimitiveType!!,
+                        ).invoke(null, userId) as UserHandle
+                        val intent = Intent(Intent.ACTION_ASSIST).apply {
+                            component = ComponentName(
+                                ModuleConfig.ETA_PACKAGE,
+                                "${ModuleConfig.ETA_PACKAGE}.agent.voice.EtaVoiceAssistActivity",
+                            )
+                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        }
+                        val start = HookSupport.findMethod(
+                            Context::class.java, "startActivityAsUser",
+                            Intent::class.java, UserHandle::class.java,
+                        ) ?: return@withAssistantCallingIdentity false
+                        start.invoke(context, intent, user)
+                        finalizeSuccessfulLaunch(logger, phoneWindowManager, source, now)
+                        logger.info("$source: Eta activity_requested user=$userId; session not yet confirmed")
+                        true
+                    }
                 }
+            }.getOrElse { throwable ->
+                logger.warnThrottled("${source}_eta_explicit_fallback_failed") {
+                    "$source: Eta 当前用户显式入口失败，type=${throwable.safeLogType()}"
+                }
+                false
             }
         }
     }
@@ -327,7 +371,7 @@ internal object PowerHooks {
             }
         } else {
             logger.warnThrottled("${source}_assistant_recovery_pending") {
-                "$source: voiceinteraction 失败，已在后台修复默认助理配置"
+                "$source: voiceinteraction 启动失败；默认助理配置修复已入队，不代表电源路由成功"
             }
         }
     }

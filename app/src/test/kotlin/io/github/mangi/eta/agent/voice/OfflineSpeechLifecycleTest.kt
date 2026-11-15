@@ -1,0 +1,166 @@
+package io.github.mangi.eta.agent.voice
+
+import android.app.Application
+import android.os.Looper
+import io.github.mangi.eta.data.model.AsrProvider
+import io.github.mangi.eta.data.model.QwenSpeechConfig
+import io.github.mangi.eta.data.model.SpeechSettings
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.channels.Channel
+import org.junit.After
+import org.junit.Assert.*
+import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.RuntimeEnvironment
+import org.robolectric.Shadows.shadowOf
+import org.robolectric.annotation.Config
+
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [34], application = Application::class)
+class OfflineSpeechLifecycleTest {
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private val captures = mutableListOf<FakeCapture>()
+    private val requests = mutableListOf<Request>()
+    private val results = mutableListOf<String>()
+    private val controllers = mutableListOf<SpeechInputController>()
+    private var before = 0
+    private var after = 0
+    private var refineCalls = 0
+
+    private fun controller(automatic: Boolean = false) = SpeechInputController(
+        context = RuntimeEnvironment.getApplication(), scope = scope, automaticEndpoint = automatic,
+        beforeCapture = { before++ }, afterCapture = { after++ },
+        refiner = SpeechTranscriptRefiner(loadConfig = { refineCalls++; error("Offline must not refine") }),
+        createRecorder = { FakeCapture().also(captures::add) },
+        recognizeStream = { _, _, _, _, _, _, _ -> error("Offline must not use cloud stream") },
+        recognizeFile = { _, _, _, _, _ -> error("Offline must not upload a file") },
+        recognizeLocal = { _, frames, begin, partial, endpoint, silence ->
+            assertSame(captures.last().frames, frames)
+            val request = Request(frames, begin, partial, endpoint, silence)
+            requests += request
+            try { request.result.await() } finally { request.ended = true }
+        }, onResult = results::add,
+    ).also(controllers::add)
+
+    private fun start(controller: SpeechInputController, held: Boolean = false) {
+        // No credentials argument: a repository read is forbidden, even with refine enabled.
+        controller.start(SpeechSettings(asr = AsrProvider.SHERPA_NCNN, refineTranscript = true,
+            qwenAsr = QwenSpeechConfig(baseUrl = "invalid-unused-cloud")), holdToTalk = held)
+        idle()
+    }
+
+    @After fun close() {
+        controllers.forEach { it.cancel() }; scope.cancel(); idle()
+    }
+
+    @Test fun readinessGatesCapturePartialReplacesAndRealLevelSurvivesUntilFinish() {
+        val c = controller(); start(c)
+        assertFalse(captures.single().started)
+        assertEquals(0, before)
+        val request = requests.single()
+        request.begin(); idle()
+        assertTrue(captures.single().started)
+        assertEquals(1, before)
+        assertArrayEquals(byteArrayOf(1, 2, 3, 4), request.frames.tryReceive().getOrThrow())
+        assertEquals(0.42f, c.state.value.level)
+        request.partial("打开"); request.partial("打开设置"); idle()
+        assertEquals("打开设置", c.state.value.preview)
+        assertTrue(results.isEmpty())
+        c.finish(); c.finish(); idle()
+        request.result.complete("打开设置"); idle()
+        assertEquals(listOf("打开设置"), results)
+        assertEquals(0, refineCalls)
+        assertEquals(1, after)
+        assertFalse(c.state.value.active)
+    }
+
+    @Test fun onlyAutomaticNonHoldEnablesEndpointAndEndpointFinishesCapture() {
+        for ((automatic, held, expected) in listOf(Triple(false, false, 0), Triple(true, true, 0), Triple(true, false, 2000))) {
+            val c = controller(automatic); start(c, held)
+            val r = requests.last(); assertEquals(expected, r.silence)
+            r.begin(); idle()
+            if (expected > 0) { r.endpoint(); idle(); assertTrue(captures.last().finished) }
+            c.cancel(); idle()
+        }
+        assertTrue(results.isEmpty())
+    }
+
+    @Test fun cancelLoadingRejectsLateBeginPreviewAndResult() {
+        val c = controller(); start(c)
+        val old = requests.single(); c.cancel(); idle()
+        assertTrue(old.ended)
+        old.begin(); old.partial("过时预览"); old.result.complete("过时结果"); idle()
+        assertFalse(captures.single().started)
+        assertTrue(results.isEmpty()); assertEquals("", c.state.value.preview)
+        start(c)
+        val current = requests.last(); current.begin(); idle()
+        old.partial("旧轮次"); idle()
+        assertNotEquals("旧轮次", c.state.value.preview)
+        c.cancel(); idle()
+        assertEquals(before, after)
+    }
+
+    @Test fun failureNeverFallsBackOrSubmits() {
+        val c = controller(); start(c)
+        requests.single().result.completeExceptionally(IllegalStateException("fixture-worker-death")); idle()
+        assertTrue(results.isEmpty()); assertFalse(c.state.value.active)
+        assertNotNull(c.state.value.error)
+        assertEquals(0, before); assertEquals(0, refineCalls)
+    }
+
+    @Test fun finishBeforeReadyCancelsWithoutOpeningMicrophone() {
+        val c = controller(); start(c); c.finish(); idle()
+        requests.single().begin(); idle()
+        assertFalse(captures.single().started); assertTrue(requests.single().ended)
+        assertTrue(results.isEmpty())
+    }
+
+    @Test fun cancelActiveCaptureAndOwnerCancellationReleaseOnceWithoutSending() {
+        val c = controller(); start(c)
+        requests.single().begin(); idle()
+        c.cancel(); c.cancel(); idle()
+        assertEquals(1, before); assertEquals(1, after)
+        assertTrue(captures.single().finished); assertTrue(results.isEmpty())
+        start(c); requests.last().begin(); idle()
+        scope.cancel(); idle()
+        assertEquals(2, before); assertEquals(2, after)
+        assertTrue(requests.last().ended); assertTrue(results.isEmpty())
+    }
+
+    @Test fun emptyOfflineFinalReportsNoSpeechRatherThanCloudFallback() {
+        val c = controller(); start(c)
+        requests.single().begin(); idle()
+        c.finish(); idle()
+        requests.single().result.complete("  "); idle()
+        assertTrue(results.isEmpty()); assertEquals("没有识别到语音，请重试", c.state.value.error)
+        assertEquals(before, after); assertEquals(0, refineCalls)
+    }
+
+    private fun idle() = shadowOf(Looper.getMainLooper()).idle()
+    private class Request(val frames: kotlinx.coroutines.channels.ReceiveChannel<ByteArray>, val begin: () -> Unit, val partial: (String) -> Unit,
+        val endpoint: () -> Unit, val silence: Int) {
+        val result = CompletableDeferred<String>()
+        var ended = false
+    }
+    private class FakeCapture : SpeechAudioCapture {
+        override val frames = Channel<ByteArray>(10)
+        private val stopped = CompletableDeferred<Unit>()
+        var started = false
+        var finished = false
+        override suspend fun record(onReady: () -> Unit, onLevel: (Float) -> Unit) {
+            started = true
+            try {
+                onReady(); onLevel(0.42f)
+                frames.send(byteArrayOf(1, 2, 3, 4))
+                stopped.await()
+            } finally { frames.close() }
+        }
+        override fun finish() { finished = true; stopped.complete(Unit) }
+        override fun cancel() { finish(); frames.cancel() }
+    }
+}

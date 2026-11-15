@@ -3,6 +3,7 @@ package io.github.mangi.eta.agent.voice
 import android.content.Context
 import io.github.mangi.eta.core.AndroidAgentLogger
 import io.github.mangi.eta.data.model.SpeechCredentials
+import io.github.mangi.eta.data.model.TtsProvider
 import io.github.mangi.eta.data.model.SpeechSettings
 import io.github.mangi.eta.data.repository.SpeechSettingsRepository
 import java.io.Closeable
@@ -39,6 +40,7 @@ internal class SpeechPlaybackController(
     private var job: Job? = null
     private var generation = 0L
     private var output: SpeechAudioOutput? = null
+    private var systemPlayback: SystemSpeechPlayback? = null
     private var lease: SpeechAudioLease? = null
     private var playbackActive = false
 
@@ -50,12 +52,33 @@ internal class SpeechPlaybackController(
             try {
                 lease = SpeechAudioLease(context, interruptOnScreenOff) { stop() }.also { it.acquire(playback = false) }
                 val rawConfig = settings ?: SpeechSettingsRepository.settings()
-                val rawSecrets = credentials ?: SpeechSettingsRepository.credentials(context)
-                val (config, secrets) = SpeechSettingsRepository.resolveDeepSeekFallback(rawConfig, rawSecrets)
+                // SYSTEM never opens speech or provider credentials, even with a lost keystore.
+                val (config, secrets) = if (rawConfig.tts == TtsProvider.SYSTEM) {
+                    rawConfig to SpeechCredentials()
+                } else {
+                    val rawSecrets = credentials ?: SpeechSettingsRepository.credentials(context)
+                    SpeechSettingsRepository.resolveDeepSeekFallback(rawConfig, rawSecrets)
+                }
                 validateSpeechSettings(config, secrets, synthesis = true)
-                val readable = withContext(Dispatchers.Default) { SpeechText.readable(text) }
+                val readable = withContext(Dispatchers.Default) {
+                    if (config.tts == TtsProvider.DEEPSEEK && !config.deepseekTts.filterMarkdown) text.trim()
+                    else SpeechText.readable(text)
+                }
                 if (readable.isBlank()) throw SpeechFailure(SpeechErrorCode.NO_SPEECH, "这条消息没有可朗读的正文")
                 if (readable.length > 30_000) throw SpeechFailure(SpeechErrorCode.CONFIGURATION, "正文过长，请选择较短的回答朗读")
+                if (config.tts == TtsProvider.SYSTEM) {
+                    lease?.requestPlaybackFocus()
+                    val local = SystemSpeechPlayback(context)
+                    systemPlayback = local
+                    local.play(readable, config.systemTts, config.language) {
+                        if (session == generation) {
+                            if (!playbackActive) { playbackActive = true; beforePlayback() }
+                            mutableState.value = SpeechPlaybackState(messageId)
+                        }
+                    }
+                    if (session == generation) stop()
+                    return@launch
+                }
                 lease?.requestPlaybackFocus { beforePlayback(); playbackActive = true }
                 val player = createOutput()
                 output = player
@@ -152,6 +175,7 @@ internal class SpeechPlaybackController(
 
     fun stop() {
         generation++
+        systemPlayback?.close(); systemPlayback = null
         output?.close(); output = null
         job?.cancel(); job = null
         lease?.close(); lease = null

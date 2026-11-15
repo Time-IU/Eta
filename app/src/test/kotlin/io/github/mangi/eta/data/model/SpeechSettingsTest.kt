@@ -2,6 +2,8 @@ package io.github.mangi.eta.data.model
 
 import io.github.mangi.eta.agent.voice.SpeechFailure
 import io.github.mangi.eta.agent.voice.validateSpeechSettings
+import io.github.mangi.eta.data.datastore.migratedLocalAsrJson
+import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.Json
 import org.junit.Assert.*
 import org.junit.Test
@@ -13,22 +15,108 @@ class SpeechSettingsTest {
         coerceInputValues = true
     }
 
-    @Test fun legacySystemRecognitionMigratesToDefaultOnlineProviderAndPreservesOtherSettings() {
+    @Test fun diskMigrationChangesOnlyAsrRetainingUnknownCloudFields() {
+        for (key in listOf("SHERPA_NCNN", "QWEN3_LOCAL")) {
+            val raw = """{"asr":"$key","qwenAsr":{"region":"SINGAPORE","baseUrl":"https://saved.example"},"futureCloudConfig":{"keep":[1,true,"x"]},"deepseekAsr":{"baseUrl":"https://saved-asr.example"},"deepseekTts":{"voice":"saved-voice","filterMarkdown":false},"systemTts":{"engine":"saved"},"refineTranscript":true}"""
+            val before = json.parseToJsonElement(raw).jsonObject
+            val migrated = migratedLocalAsrJson(json, raw)!!
+            val after = json.parseToJsonElement(migrated).jsonObject
+            assertEquals(before.filterKeys { it != "asr" }, after.filterKeys { it != "asr" })
+            assertEquals(AsrProvider.LOCAL, json.decodeFromString<SpeechSettings>(migrated).asr)
+            assertNull(migratedLocalAsrJson(json, migrated))
+        }
+        for (key in listOf("QWEN_REALTIME", "QWEN_FLASH", "QWEN_FILE", "DOUBAO", "MIMO", "LOCAL", "DEEPSEEK")) {
+            assertNull(migratedLocalAsrJson(json, """{"asr":"$key"}"""))
+        }
+    }
+
+    @Test fun legacyReadNormalizationIsAsrOnlyAndCloudsAreUnchanged() {
+        assertEquals(7, AsrProvider.LOCAL.ordinal)
+        assertEquals(5, AsrProvider.SHERPA_NCNN.ordinal)
+        assertEquals(6, AsrProvider.QWEN3_LOCAL.ordinal)
+        assertEquals(7, AsrProvider.selectable.size)
+        assertFalse(AsrProvider.selectable.contains(AsrProvider.SHERPA_NCNN))
+        assertFalse(AsrProvider.selectable.contains(AsrProvider.QWEN3_LOCAL))
+        for (provider in AsrProvider.entries) {
+            val saved = json.decodeFromString<SpeechSettings>(
+                """{"asr":"${provider.name}","tts":"MIMO","language":"ja","refineTranscript":true,"qwenAsr":{"baseUrl":"https://saved.example"},"mimoTts":{"voice":"saved-voice"}}""",
+            )
+            val actual = saved.canonicalized()
+            assertEquals(if (provider.ordinal in 5..6) AsrProvider.LOCAL else provider, actual.asr)
+            assertEquals(saved.copy(asr = actual.asr), actual)
+            assertEquals(actual, actual.canonicalized())
+        }
+    }
+
+    @Test fun newAndUnknownProvidersDefaultToOfflineAndPreserveOtherSettings() {
         val config = json.decodeFromString<SpeechSettings>("{}")
-        assertEquals(AsrProvider.QWEN_REALTIME, config.asr)
+        assertEquals(AsrProvider.LOCAL, config.asr)
         assertEquals(TtsProvider.NONE, config.tts)
         assertFalse(config.autoSpeak)
         assertTrue(config.recognitionEnabled)
-        assertThrows(SpeechFailure::class.java) {
-            validateSpeechSettings(config, SpeechCredentials(), synthesis = false)
-        }
+        validateSpeechSettings(config, SpeechCredentials(), synthesis = false)
         val legacy = json.decodeFromString<SpeechSettings>(
             """{"asr":"SYSTEM","tts":"DOUBAO","autoSpeak":true,"refineTranscript":true}""",
         )
-        assertEquals(AsrProvider.QWEN_REALTIME, legacy.asr)
+        assertEquals(AsrProvider.LOCAL, legacy.asr)
         assertEquals(TtsProvider.DOUBAO, legacy.tts)
         assertTrue(legacy.autoSpeak)
         assertTrue(legacy.refineTranscript)
+    }
+
+    @Test fun offlineAppendsOrdinalAndExplicitSavedCloudProvidersAreNotMigrated() {
+        assertEquals(listOf("QWEN_REALTIME", "QWEN_FLASH", "QWEN_FILE", "DOUBAO", "MIMO", "SHERPA_NCNN", "QWEN3_LOCAL", "LOCAL", "DEEPSEEK"),
+            AsrProvider.entries.map { it.name })
+        assertEquals(5, AsrProvider.SHERPA_NCNN.ordinal)
+        for (provider in AsrProvider.entries) {
+            val saved = SpeechSettings(asr = provider, refineTranscript = true,
+                qwenAsr = QwenSpeechConfig(baseUrl = "https://saved.example"))
+            assertEquals(saved, json.decodeFromString<SpeechSettings>(json.encodeToString(saved)))
+        }
+        validateSpeechSettings(SpeechSettings(qwenAsr = QwenSpeechConfig(baseUrl = "invalid-unused")),
+            SpeechCredentials(), synthesis = false)
+    }
+
+    @Test fun qwenLocalAppendsAndLegacyJsonProviderKeysRemainUnchanged() {
+        assertEquals(6, AsrProvider.QWEN3_LOCAL.ordinal)
+        for ((ordinal, key) in listOf("QWEN_REALTIME", "QWEN_FLASH", "QWEN_FILE", "DOUBAO", "MIMO", "SHERPA_NCNN").withIndex()) {
+            val saved = json.decodeFromString<SpeechSettings>("""{"asr":"$key","language":"ja","refineTranscript":true}""")
+            assertEquals(key, saved.asr.name)
+            assertEquals(ordinal, saved.asr.ordinal)
+            assertEquals("ja", saved.language)
+            assertTrue(saved.refineTranscript)
+        }
+        val local = SpeechSettings(asr = AsrProvider.QWEN3_LOCAL, refineTranscript = true,
+            qwenAsr = QwenSpeechConfig(baseUrl = "invalid-unused"))
+        validateSpeechSettings(local, SpeechCredentials(), synthesis = false)
+        assertTrue(json.encodeToString(local).contains("\"asr\":\"QWEN3_LOCAL\""))
+        assertEquals(local, json.decodeFromString<SpeechSettings>(json.encodeToString(local)))
+        assertEquals(AsrProvider.LOCAL, json.decodeFromString<SpeechSettings>("{}").asr)
+    }
+
+    @Test fun deepseekNamesAndSystemTtsRoundTripWithoutOrdinalPersistence() {
+        for (provider in TtsProvider.entries) {
+            val settings = SpeechSettings(asr = AsrProvider.DEEPSEEK, tts = provider,
+                deepseekAsr = DeepSeekAsrConfig("https://asr.example.test"),
+                deepseekTts = DeepSeekTtsConfig("https://tts.example.test", "saved-voice", false),
+                systemTts = SystemTtsConfig(engine = "com.heytap.speechassist", language = "zh-CN"))
+            val encoded = json.encodeToString(settings)
+            assertTrue(encoded.contains("\"asr\":\"DEEPSEEK\""))
+            assertTrue(encoded.contains("\"tts\":\"${provider.name}\""))
+            assertEquals(settings, json.decodeFromString<SpeechSettings>(encoded))
+            assertEquals(settings, settings.canonicalized())
+        }
+        val credentials = SpeechCredentials(qwenAsr = "qwen", mimoTts = "mimo")
+            .withValue(SpeechCredentialField.DEEPSEEK_ASR, "deepseek-asr")
+            .withValue(SpeechCredentialField.DEEPSEEK_TTS, "deepseek-tts")
+        val restored = json.decodeFromString<SpeechCredentials>(json.encodeToString(credentials))
+        assertEquals("deepseek-asr", restored.deepseekAsr)
+        assertEquals("deepseek-tts", restored.deepseekTts)
+        assertEquals("qwen", restored.qwenAsr)
+        assertEquals("mimo", restored.mimoTts)
+        assertEquals(6, TtsProvider.SYSTEM.ordinal) // Preserve the custom branch's legacy index.
+        assertEquals(1, AsrProvider.selectable.count { it.isLocal })
+        assertTrue(AsrProvider.selectable.contains(AsrProvider.DEEPSEEK))
     }
 
     @Test fun switchingServicesPreservesIndependentConfigurations() {

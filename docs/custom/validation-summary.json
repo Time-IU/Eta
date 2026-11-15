@@ -1,0 +1,147 @@
+{
+  "base_version": "v3.4.4",
+  "base_commit": "83a25e71eed1e5d8dadbd330362e3999b46595d9",
+  "build_variant": "debug",
+  "version_name": "3.4.4-debug",
+  "version_code": 2026111302,
+  "build_status": "passed",
+  "selected_regression_test_count": 153,
+  "failures": 0,
+  "errors": 0,
+  "skipped": 0,
+  "suites": [
+    {
+      "name": "io.github.mangi.eta.agent.voice.DeepSeekSpeechRecognitionTest",
+      "tests": 3,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "name": "io.github.mangi.eta.agent.voice.DeepSeekSpeechSynthesisTest",
+      "tests": 3,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "name": "io.github.mangi.eta.agent.voice.FileSpeechLifecycleTest",
+      "tests": 7,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "name": "io.github.mangi.eta.agent.voice.LocalSpeechLifecycleTest",
+      "tests": 11,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "name": "io.github.mangi.eta.agent.voice.MimoSpeechRecognitionTest",
+      "tests": 6,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "name": "io.github.mangi.eta.agent.voice.MimoSpeechSynthesisTest",
+      "tests": 6,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "name": "io.github.mangi.eta.agent.voice.SpeechEndpointDetectorTest",
+      "tests": 10,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "name": "io.github.mangi.eta.agent.voice.SpeechLifecycleTest",
+      "tests": 12,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "name": "io.github.mangi.eta.agent.voice.local.LocalSpeechPortableTest",
+      "tests": 28,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "name": "io.github.mangi.eta.agent.voice.qwen.QwenPcmAccumulatorTest",
+      "tests": 5,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "name": "io.github.mangi.eta.agent.voice.qwen.WarmCachePolicyTest",
+      "tests": 6,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "name": "io.github.mangi.eta.data.model.SpeechSettingsTest",
+      "tests": 16,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "name": "io.github.mangi.eta.ui.components.custom.CustomMessageBackPolicyTest",
+      "tests": 4,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "name": "io.github.mangi.eta.ui.components.custom.CustomMessageInteractionStateTest",
+      "tests": 7,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "name": "io.github.mangi.eta.ui.components.custom.CustomQuoteTest",
+      "tests": 3,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "name": "io.github.mangi.eta.ui.components.custom.CustomSpeechLocationsTest",
+      "tests": 6,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "name": "io.github.mangi.eta.ui.components.custom.CustomSpeechTextTest",
+      "tests": 8,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "name": "io.github.mangi.eta.ui.voice.LocalSpeechModelPresentationTest",
+      "tests": 12,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    }
+  ],
+  "art_hard_verifier_exit": 0,
+  "apk_name": "Eta-v3.4.4-pause-autosend-fix-preview.apk",
+  "apk_bytes": 48794514,
+  "apk_sha256": "70a6c6a74273a0869b38e8b4d38cfa9168416a9439285facccd14df873c43bb8",
+  "build_validation_scope": "Selected suites only; not full lint, all tests, all Android devices or complete live service testing",
+  "maintainer_feedback": "User reports this version satisfactory for personal use; not a universal compatibility result",
+  "private_data_or_model_weights_included": false
+}
