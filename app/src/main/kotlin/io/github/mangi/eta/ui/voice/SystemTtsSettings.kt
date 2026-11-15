@@ -3,6 +3,13 @@ package io.github.mangi.eta.ui.voice
 import android.content.Intent
 import android.widget.Toast
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.padding
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -81,23 +88,46 @@ internal fun SystemTtsSettingsSection(store: SpeechSettingsStore) {
                     onSelectedIndexChange = { index -> steps.getOrNull(index)?.let { store.edit(settings.copy(systemTts = config.copy(rate = it))) } })
                 CouiDropdownPreference(title = pitchTitle, items = labels, selectedIndex = steps.indexOf(config.pitch),
                     onSelectedIndexChange = { index -> steps.getOrNull(index)?.let { store.edit(settings.copy(systemTts = config.copy(pitch = it))) } })
-                CouiButton(text = settingsTitle, enabled = !store.saving, onClick = openSettings)
             } else {
                 OverlayDropdownPreference(title = rateTitle, items = labels, selectedIndex = steps.indexOf(config.rate),
                     onSelectedIndexChange = { index -> steps.getOrNull(index)?.let { store.edit(settings.copy(systemTts = config.copy(rate = it))) } })
                 OverlayDropdownPreference(title = pitchTitle, items = labels, selectedIndex = steps.indexOf(config.pitch),
                     onSelectedIndexChange = { index -> steps.getOrNull(index)?.let { store.edit(settings.copy(systemTts = config.copy(pitch = it))) } })
-                TextButton(text = settingsTitle, enabled = !store.saving, onClick = openSettings)
             }
+            SystemTtsCenteredAction(
+                text = settingsTitle,
+                enabled = !store.saving,
+                onClick = openSettings,
+            )
         }
         SpeechGroupCard(title = "系统 TTS 诊断") {
             SpeechNote(if (detecting) "正在读取引擎音色元数据…" else diagnostic)
-            if (LocalUiStyle.current == AppearanceUiStyle.COUI) {
-                CouiButton(text = "重新检测", enabled = !detecting && !store.saving, onClick = { revision++ })
-            } else {
-                TextButton(text = "重新检测", enabled = !detecting && !store.saving, onClick = { revision++ })
-            }
+            SystemTtsCenteredAction(
+                text = "重新检测",
+                enabled = !detecting && !store.saving,
+                onClick = { revision++ },
+            )
         }
         SpeechNote("仅离线音色默认开启；系统默认模式须显式关闭此限制并保存。不自动安装语言包；诊断不发声、不录音。")
+    }
+}
+
+/** Card-local action: symmetric gutters, centered label and a full-width touch target. */
+@Composable
+private fun SystemTtsCenteredAction(
+    text: String,
+    enabled: Boolean,
+    onClick: () -> Unit,
+) {
+    Box(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        val buttonModifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)
+        if (LocalUiStyle.current == AppearanceUiStyle.COUI) {
+            CouiButton(text = text, enabled = enabled, onClick = onClick, modifier = buttonModifier)
+        } else {
+            TextButton(text = text, enabled = enabled, onClick = onClick, modifier = buttonModifier)
+        }
     }
 }

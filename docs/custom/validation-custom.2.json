@@ -1,0 +1,24 @@
+{
+  "release_tag": "v3.4.4-custom.2",
+  "base_source_commit": "d81b53fe7a2be7e9a093b0dc7ed9e727acf76580",
+  "versionName": "3.4.4-debug+custom.2",
+  "versionCode": 2026111302,
+  "source_apk_bytes": 48748668,
+  "source_apk_sha256": "2e6e19c587d232eb707a74e56d6e3c8aa04462a6589280ce0105ac3f207fa80d",
+  "build_status": "passed",
+  "selected_regression_tests": 153,
+  "failures": 0,
+  "skipped": 0,
+  "gui_on_device_verified": false,
+  "model_weights_in_apk": false,
+  "signed_apk": {
+    "name": "Eta-v3.4.4-custom.2-tts-centered.apk",
+    "bytes": 48794514,
+    "sha256": "25dece53e800b3fb7220a4c670956deb38235b5816a589836b6e3bec5b1c3abf",
+    "payload_matches_build": true
+  },
+  "signature_verified": true,
+  "signing_certificate_sha256": "a40da80a59d170caa950cf15c18c454d47a39b26989d8b640ecd745ba71bf5dc",
+  "art_strict_verification_exit_code": 0,
+  "installed_on_device": false
+}

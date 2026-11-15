@@ -6,9 +6,9 @@
 
 ## 文档导航
 
+- [custom.2：系统 TTS 操作区对齐](CHANGELOG-custom.2.md)
 - [3.4.4 定制变更与验证边界](CHANGELOG-3.4.4.md)
 - [源码路径映射与维护入口](MODIFICATIONS.md)
-- [酷安介绍文案](COOLAPK-POST.md)
 - [构建说明](../../BUILD.md) · [第三方组件说明](../../THIRD_PARTY.md)
 - [上游中文介绍](../../README.md) · [Upstream English introduction](../../README_EN.md)
 
@@ -33,6 +33,6 @@
 
 定制问题请优先在 [本 fork 的 Issues](https://github.com/Time-IU/Eta/issues) 反馈，不把定制问题直接提交上游。请说明机型、ROM、使用入口和最小复现，避免上传密钥、完整私人对话或未脱敏日志。
 
-本文档对应本 fork 的源码快照与预览构建记录；源码提交不代表已发布 APK Release 或向上游提交 PR。未来可能整理适合上游的改动，但不作承诺。
+源码与 APK 预览版通过 [Releases](https://github.com/Time-IU/Eta/releases) 发布；各版验证边界见对应说明。发布 fork 不代表已向上游提交 PR。未来可能整理适合上游的改动，但不作承诺。
 
 主项目沿用上游 README 所述 GPL-3.0，根目录 [LICENSE](../../LICENSE) 保留原文；不擅自推定 `-only` / `-or-later`。第三方运行库与模型分别遵循各自许可；详见第三方说明及随源码保留的许可文件。本说明不是法律合规认证。
