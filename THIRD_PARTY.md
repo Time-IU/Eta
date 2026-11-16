@@ -13,6 +13,14 @@
 | ONNX Runtime | `libonnxruntime.so` | Microsoft ONNX Runtime，预编译文件来自上述 Sherpa Android release；MIT，许可及第三方 notices 在 `assets/qwen_asr/` |
 | Sherpa-NCNN wrapper/旧兼容库 | `com/k2fsa/sherpa/ncnn/`、两份 NCNN .so | 参考 [Quor-a/ZorvAI](https://github.com/Quor-a/ZorvAI/tree/036e4cdc4e0d5c8aa3e8dd192aa4ddf441984e24) 的 Apache-2.0 语音实现；Sherpa-NCNN Apache-2.0，Tencent NCNN BSD-3-Clause；详见 `assets/offline_asr/NOTICE.md` |
 
+### Vosk Android 与 JNA（本次新增依赖）
+
+- **Vosk Android `com.alphacephei:vosk-android:0.3.75`**：官方 [vosk-api 源码](https://github.com/alphacep/vosk-api)，该精确版本的 [Maven Central POM](https://repo.maven.apache.org/maven2/com/alphacephei/vosk-android/0.3.75/vosk-android-0.3.75.pom) 明确声明 Apache License 2.0，并声明运行时依赖 `net.java.dev.jna:jna:5.18.1` 的 Android AAR。许可原文见 [Apache-2.0](https://www.apache.org/licenses/LICENSE-2.0.txt)。这是依赖来源/许可记录，不表示本 fork 自行编译了 Vosk 或完成了其所有原生依赖的发布审查；不存在已核验的 `v0.3.75` 源码标签依据时，不虚构该标签。
+- **JNA `net.java.dev.jna:jna:5.18.1`**：该精确版本的 [Maven Central POM](https://repo.maven.apache.org/maven2/net/java/dev/jna/jna/5.18.1/jna-5.18.1.pom) 与 [上游 5.18.1 LICENSE](https://github.com/java-native-access/jna/blob/5.18.1/LICENSE) 均说明 **Apache-2.0 OR LGPL-2.1-or-later** 双许可，可选择其一；本集成按 Apache-2.0 分支记录，并保留其上游许可说明。对应原文为 [AL2.0](https://github.com/java-native-access/jna/blob/5.18.1/AL2.0) 和 [LGPL2.1](https://github.com/java-native-access/jna/blob/5.18.1/LGPL2.1)。JNA 的 native/libffi 等第三方 notices 仍应随最终实际分发产物独立核对，不以本条代替完整 NOTICE 审查。
+- **两项中文模型不是 runtime 许可的推断**：`vosk-model-small-cn-0.22` 与 `vosk-model-cn-0.22` 的 Apache-2.0 声明来自 [官方模型清单的两条中文记录](https://alphacephei.com/vosk/models)。原 ZIP 大小、SHA-256、逐文件校验、安全导入、存储/内存边界和许可原文索引见 [Vosk 中文模型说明](docs/custom/vosk-models.md)。权重不嵌入 APK；当前唯一推荐及无有效保存选择时的缺省为 SenseVoice Q8_0；已有合法选择不强制迁移。
+
+本节已核对上述实际版本的发布 POM 与 JNA 原始许可文本；Vosk Apache-2.0、JNA 上游双许可文本、libffi 许可及来源索引随 APK 保留于 `assets/licenses/vosk-jna/`。这不等于所有静态依赖的完整发布审查，也不冒称实机识别、内存或完整兼容性验收已经通过；实际构建、签名与验证结果应以对应交付记录为准。
+
 原 native 版权与许可证没有被主项目 GPL 文本覆盖或抹去。集成说明、静态库来源及本地修改应分别看待。
 
 ## Native 文件与构建来源

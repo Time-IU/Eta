@@ -13,6 +13,10 @@ internal object LocalSpeechImport {
     suspend fun extract(model: LocalSpeechModelDescriptor, stage: File, opener: () -> InputStream,
         progress: (LocalSpeechProgress) -> Unit) {
         progress(LocalSpeechProgress(LocalSpeechStage.IMPORTING, 0, model.sizeBytes))
+        if (model.engine == LocalSpeechBackend.VOSK) {
+            opener().use { LocalSpeechVoskArchive.importArchive(model, stage, it, progress) }
+            return
+        }
         opener().use { source ->
             val input = BufferedInputStream(source)
             input.mark(8); val magic = ByteArray(4); var count = 0

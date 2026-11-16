@@ -27,12 +27,44 @@ class LocalSpeechModelPresentationTest {
             "sensevoice_small_q8_0" to (252684608L to "253MB"),
             "sensevoice_small_q4_k_m" to (145738304L to "146MB"),
             "sensevoice_small_int8" to (239549735L to "240MB"))
-        assertEquals(expected.keys, models().map { it.id }.toSet())
-        models().forEach { m ->
+        assertEquals(expected.keys, models().filter { it.archive == null }.map { it.id }.toSet())
+        models().filter { it.archive == null }.forEach { m ->
             assertEquals(m.id, expected.getValue(m.id).first, m.sizeBytes)
             assertEquals(m.id, expected.getValue(m.id).second, friendlyModelSize(m.sizeBytes))
             assertEquals(m.id, m.files.sumOf { it.sizeBytes }, m.sizeBytes)
         }
+    }
+    @Test fun voskTransferUnpackedStorageAndMissingRamAreDistinct() {
+        val small = models().single { it.id == "vosk_small_cn_022" }
+        val large = models().single { it.id == "vosk_cn_022" }
+        assertEquals(43898754L, small.sizeBytes); assertEquals(68292271L, small.installedSizeBytes)
+        assertEquals(1358736686L, large.sizeBytes); assertEquals(2143476709L, large.installedSizeBytes)
+        assertEquals(3502213395L, large.installationSpaceBytes)
+        val measured = parseLocalSpeechMeasurements(asset("measurements.json"))
+        assertNull(measured.models[small.id]); assertNull(measured.models[large.id])
+        assertFalse(small.recommended); assertFalse(large.recommended)
+        val ui = source("LocalSpeechModelInfo.kt")
+        assertTrue(ui.contains("解压后文件")); assertTrue(ui.contains("运行 RAM 是三项不同指标"))
+        assertTrue(ui.contains("Vosk / Kaldi")); assertTrue(ui.contains("不回退云端"))
+    }
+    @Test fun explicitInspectionForcesFullCheckButSavingAvoidsSecondInspection() {
+        val ui = source("LocalSpeechSettings.kt")
+        assertTrue(ui.contains("onInspect = { operate(model.id, forceFullCheck = true) { } }"))
+        assertTrue(ui.contains("forceFull = forceFullCheck"))
+        assertTrue(ui.contains("if (refreshAfter)"))
+        val save = ui.substringAfter("operate(id, refreshAfter = false)").substringBefore("下载模型（联网）")
+        assertTrue(save.contains("LocalSpeechModelStore.inspect(context, id).installed"))
+        assertTrue(save.contains("LocalSpeechModelStore.selectModel(context, id)"))
+        assertEquals(1, Regex("LocalSpeechModelStore.inspect").findAll(save).count())
+    }
+    @Test fun voskLargeModelIsNotPresentedAsLowMemoryOrDefault() {
+        val small = models().single { it.id == "vosk_small_cn_022" }
+        val large = models().single { it.id == "vosk_cn_022" }
+        assertTrue(large.overview().contains("官方定位服务器"))
+        assertTrue(large.overview().contains("非低内存或默认推荐"))
+        assertTrue(large.overview().contains("内存不足加载失败"))
+        assertTrue(small.overview().contains("不改变默认模型"))
+        assertEquals("Vosk 中文 Small", small.shortLabel()); assertEquals("Vosk 中文大模型", large.shortLabel())
     }
     @Test fun onnxPayloadIncludesTokensExactlyOnce() {
         val m = models().single { it.id == "sensevoice_small_int8" }
@@ -50,7 +82,7 @@ class LocalSpeechModelPresentationTest {
     }
     @Test fun actualMeasurementsHaveSixMatchingModelsAndTimingUnits() {
         val parsed = parseLocalSpeechMeasurements(asset("measurements.json"))
-        assertEquals(models().map { it.id }.toSet(), parsed.models.keys)
+        assertEquals(models().filter { it.archive == null }.map { it.id }.toSet(), parsed.models.keys)
         assertEquals("public-0.wav", parsed.fixture)
         assertEquals(10.053125, parsed.audioSeconds, 0.0000001)
         assertFalse(parsed.diskCacheCold); assertFalse(parsed.serviceIpcTested)
@@ -117,4 +149,68 @@ class LocalSpeechModelPresentationTest {
         assertTrue(ui.contains("测试不代表准确率排名、常驻内存或内存需求保证"))
         assertTrue(ui.contains("缓存一个模型，空闲 120 秒释放"))
     }
+    @Test fun allEightPickerAndDetailLabelsAgreeOnExactlyOneRecommendation() {
+        val all = models()
+        assertEquals(8, all.size)
+        assertEquals("sensevoice_small_q8_0", LocalSpeechRegistry.DEFAULT_ID)
+        assertEquals(listOf("sensevoice_small_q8_0"), all.filter { it.recommended }.map { it.id })
+        all.forEach { model ->
+            assertEquals(if (model.recommended) "推荐" else "可选", model.recommendationLabel())
+            assertTrue(model.selectionLabel().endsWith(" · ${model.recommendationLabel()}"))
+        }
+        val ui = source("LocalSpeechSettings.kt")
+        assertTrue(ui.contains("it.selectionLabel()"))
+        assertTrue(ui.contains("model.recommendationLabel()"))
+        assertTrue(source("LocalSpeechModelInfo.kt").contains("model.recommendationLabel()"))
+        assertFalse(all.single { it.id == "sensevoice_small_int8" }.overview().contains("推荐"))
+    }
+    @Test fun deleteConfirmationNamesEveryModelAndExplainsScopeAndSelection() {
+        models().forEach { model ->
+            for (selected in listOf(false, true)) {
+                val body = localSpeechDeleteConfirmationText(model, selected)
+                assertTrue(body.contains("「${model.displayName}」"))
+                assertTrue(body.contains("不删除识别引擎"))
+                assertTrue(body.contains("原 ZIP / GGUF"))
+                assertTrue(body.contains("重新导入或下载"))
+                assertTrue(body.contains("90 秒")); assertTrue(body.contains("不可取消"))
+                assertTrue(body.contains("损坏或校验失败"))
+                if (selected) {
+                    assertTrue(body.contains("保留该选择")); assertTrue(body.contains("不可录音"))
+                } else assertTrue(body.contains("不会改变当前已保存的模型选择"))
+            }
+        }
+    }
+    @Test fun deletionIsAvailableForCorruptModelsAndDoesNotMutateSavedSelection() {
+        val ui = source("LocalSpeechSettings.kt")
+        assertTrue(ui.contains("LocalModelAction(\"删除已安装权重\", enabled)"))
+        val deletion = ui.substringAfter("fun deleteInstalledModel(").substringBefore("LaunchedEffect(target, store.loaded)")
+        assertTrue(deletion.contains("if (busy || store.saving || !store.loaded || importTarget != null || target != id) return"))
+        assertFalse(deletion.contains("status?.installed"))
+        assertFalse(deletion.contains("selectModel(")); assertFalse(Regex("\\bselected\\s*=(?!=)").containsMatchIn(deletion))
+        assertTrue(ui.contains("if (busy && !deleting) LocalModelAction"))
+    }
+    @Test fun deletionRequiresAcknowledgementAndAlwaysForcesNonCancellableIoInspection() {
+        val ui = source("LocalSpeechSettings.kt")
+        val deletion = ui.substringAfter("fun deleteInstalledModel(").substringBefore("LaunchedEffect(target, store.loaded)")
+        assertTrue(deletion.contains("scope.launch(context = NonCancellable)"))
+        assertTrue(deletion.contains("val result = LocalSpeechModelStore.deleteModel(context, id)"))
+        assertTrue(deletion.contains("check(result.modelId == id && !result.installed)"))
+        assertTrue(deletion.indexOf("check(result.modelId") < deletion.indexOf("message = \"已删除"))
+        val cleanup = deletion.substringAfter("} finally {")
+        assertTrue(cleanup.contains("withContext(NonCancellable + Dispatchers.IO)"))
+        assertTrue(cleanup.contains("LocalSpeechModelStore.inspect(context, id, forceFull = true)"))
+        assertFalse(cleanup.contains("message = \"已删除"))
+        assertTrue(deletion.contains("删除未完成或结果未确认"))
+    }
+    @Test fun deleteDialogsBoundScrollableBodyOutsidePersistentActions() {
+        val ui = source("LocalSpeechSettings.kt").substringAfter("private fun LocalSpeechDeleteConfirmation(")
+            .substringBefore("internal fun LocalSpeechModelDescriptor.shortLabel()")
+        assertTrue(ui.contains("CouiConfirmDialog(")); assertTrue(ui.contains("WindowDialog("))
+        assertTrue(ui.contains("message = null"))
+        assertTrue(ui.contains("heightIn(max = bodyHeight)"))
+        assertTrue(ui.contains("weight(1f, fill = false)"))
+        assertEquals(2, Regex("verticalScroll\\(rememberScrollState\\(\\)\\)").findAll(ui).count())
+        assertTrue(ui.indexOf("MiuixDialogActions(") > ui.indexOf("weight(1f, fill = false)"))
+    }
+
 }

@@ -10,6 +10,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.channels.Channel
 import org.junit.After
 import org.junit.Assert.*
@@ -41,7 +42,7 @@ class QwenSpeechLifecycleTest {
         recognizeFile = { _, _, _, _, _ -> error("Offline must not upload a file") },
         recognizeOffline = { _, _, _, _, _, _ -> error("Qwen must not silently use NCNN") },
         recognizeLocal = { _, frames, begin, partial, endpoint, silence ->
-            assertSame(captures.last().frames, frames)
+            if (!automatic) assertSame(captures.last().frames, frames)
             val request = Request(frames, begin, partial, endpoint, silence)
             requests += request
             try { request.result.await() } finally { request.ended = true }
@@ -81,14 +82,70 @@ class QwenSpeechLifecycleTest {
     }
 
     @Test fun onlyAutomaticNonHoldEnablesEndpointAndEndpointFinishesCapture() {
-        for ((automatic, held, expected) in listOf(Triple(false, false, 0), Triple(true, true, 0), Triple(true, false, 2000))) {
+        for ((automatic, held) in listOf(false to false, true to true, true to false)) {
             val c = controller(automatic); start(c, held)
-            val r = requests.last(); assertEquals(expected, r.silence)
+            val r = requests.last()
+            val source = captures.last()
+            val adaptiveCapture = automatic && !held
+            // All legacy local aliases use the shared capture VAD; the backend VAD is disabled.
+            assertEquals(0, r.silence)
+            if (adaptiveCapture) assertNotSame(source.frames, r.frames)
+            else assertSame(source.frames, r.frames)
+            assertFalse(source.started)
+            val resultsBefore = results.size
+            val forwarded = java.io.ByteArrayOutputStream()
+            val reader = scope.launch { for (frame in r.frames) forwarded.write(frame) }
             r.begin(); idle()
-            if (expected > 0) { r.endpoint(); idle(); assertTrue(captures.last().finished) }
+            assertTrue(source.started)
+
+            // The fixture's two seed samples shift the 20 ms detector windows. Check just
+            // below the pause first, then add enough real PCM to complete the final window.
+            val beforePause = lifecyclePcm(0, 200) + lifecyclePcm(2500, 400) + lifecyclePcm(0, 1980)
+            fun feed(pcm: ByteArray) {
+                for (frame in pcm.asList().chunked(SpeechRecorder.FRAME_BYTES)) {
+                    source.frames.trySend(frame.toByteArray()).getOrThrow()
+                    idle()
+                }
+            }
+            feed(beforePause)
+            assertFalse("Capture must not end before the full pause", source.finished)
+            assertTrue(reader.isActive)
+            val endPause = lifecyclePcm(0, 40)
+            feed(endPause)
+            assertEquals("Only automatic non-hold capture owns pause endpointing", adaptiveCapture, source.finished)
+            assertEquals(adaptiveCapture, reader.isCompleted)
+            assertEquals(resultsBefore, results.size)
+
+            if (!adaptiveCapture) {
+                // Manual/hold capture must bypass both PCM pause and backend endpoint callbacks.
+                r.endpoint(); idle()
+                assertFalse(source.finished)
+                assertTrue(reader.isActive)
+                c.finish(); idle()
+            }
+            assertTrue(source.finished)
+            assertTrue("PCM EOF follows capture release", reader.isCompleted)
+            assertArrayEquals(byteArrayOf(1, 2, 3, 4) + beforePause + endPause, forwarded.toByteArray())
+            assertEquals(before, after)
+            val delivered = results.size
+            r.result.complete("本机结果"); idle()
+            assertEquals(delivered + 1, results.size)
+            assertEquals("本机结果", results.last())
+            assertFalse(c.state.value.active)
+            assertTrue(r.ended)
             c.cancel(); idle()
+            assertEquals(delivered + 1, results.size)
         }
-        assertTrue(results.isEmpty())
+        assertEquals(3, results.size)
+        assertEquals(0, refineCalls)
+        assertEquals(before, after)
+    }
+
+    private fun lifecyclePcm(amplitude: Int, ms: Int): ByteArray = ByteArray(ms * 32).also { pcm ->
+        for (i in pcm.indices step 2) {
+            val value = if (i % 4 == 0) amplitude else -amplitude
+            pcm[i] = value.toByte(); pcm[i + 1] = (value shr 8).toByte()
+        }
     }
 
     @Test fun cancelLoadingRejectsLateBeginPreviewAndResult() {

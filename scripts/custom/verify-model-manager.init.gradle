@@ -1,0 +1,25 @@
+// Optional, explicit reproduction of the custom.4 selected verification configuration.
+// Does not change production SDKs, Kotlin/AGP versions, or source files.
+// ETA_VOSK_OFFICIAL_CACHE must contain the two original ZIPs listed in docs/custom/vosk-models.md.
+// Exclusions are opt-in and printed; this is never a claim of an unfiltered full-project test pass.
+allprojects {
+    tasks.withType(org.gradle.api.tasks.testing.Test).configureEach {
+        def cache = System.getenv('ETA_VOSK_OFFICIAL_CACHE')
+        if (cache) systemProperty 'eta.voskOfficialCache', new File(cache).absolutePath
+        if (System.getenv('ETA_MODEL_MANAGER_ARM64_EXCLUSIONS') == '1') {
+            logger.lifecycle('custom.4 verification: excluding SDK28/minSdk33 SystemVoicePolicyTest and unsupported Linux aarch64 API36 CustomMessageSaveControllerTest')
+            exclude '**/SystemVoicePolicyTest.class'
+            exclude '**/CustomMessageSaveControllerTest.class'
+        }
+        outputs.upToDateWhen { false }
+    }
+}
+// Original verification built unsigned before signing separately with the existing custom key.
+// Opt-in only; normal builds retain their existing signing behavior.
+gradle.beforeProject { p ->
+    p.afterEvaluate {
+        if (p.path == ':app' && System.getenv('ETA_MODEL_MANAGER_UNSIGNED') == '1') {
+            p.android.buildTypes.getByName('debug').signingConfig = null
+        }
+    }
+}

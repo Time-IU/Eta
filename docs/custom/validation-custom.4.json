@@ -1,0 +1,57 @@
+{
+  "release_tag": "v3.4.4-custom.4",
+  "base_commit": "60d9e5a40abd0e15838567be3b9a837e0946e410",
+  "scope": "custom.3 Vosk integration and custom.4 model management; publication documentation does not change APK payload",
+  "artifact": {
+    "name": "Eta-v3.4.4-custom.4-model-manager.apk",
+    "versionName": "3.4.4-debug+custom.4-model-manager",
+    "versionCode": 2026111302,
+    "bytes": 52657922,
+    "sha256": "6b120e389c2bb17b35118383e7ceb87951ca2c1d9eb21ae6e8af31a5c8e49fa1",
+    "model_weights_included": false,
+    "signer_certificate_sha256": "a40da80a59d170caa950cf15c18c454d47a39b26989d8b640ecd745ba71bf5dc"
+  },
+  "verification": {
+    "gradle_build_exit_code": 0,
+    "selected_suites": 24,
+    "tests": 237,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "deletion_tests": 21,
+    "recommendation_tests": 5,
+    "two_official_vosk_zips_imported": true,
+    "signing_and_unsigned_payload_match": true,
+    "signature_verified": true,
+    "art_strict_exit_code": 0,
+    "production_source_resources_and_tests_match_build_fingerprint": true
+  },
+  "excluded_existing_environment_suites": [
+    {
+      "suite": "SystemVoicePolicyTest",
+      "reason": "SDK28 fixture is below application minSdk33"
+    },
+    {
+      "suite": "CustomMessageSaveControllerTest",
+      "reason": "Robolectric API36 native runtime unsupported on Linux aarch64"
+    }
+  ],
+  "android_root_scratch_probe": {
+    "executes_final_apk_production_delete_class": true,
+    "exit_code": 0,
+    "provider": "sun.nio.fs.UnixSecureDirectoryStream",
+    "external_sentinel_and_other_scratch_model_retained": true,
+    "limitations": "Not an installed App UID/SELinux, Binder/native-cache or UI integration acceptance test"
+  },
+  "acceptance": {
+    "installed_over_daily_app": false,
+    "user_model_files_deleted": false,
+    "real_speech_and_large_model_android_inference_verified": false,
+    "visual_acceptance_both_ui_styles": false
+  },
+  "notes": [
+    "No fresh app rebuild was required for publication-only documentation; app production inputs match the verified build.",
+    "Source tag and APK are not upstream official releases.",
+    "Existing legitimate saved selections are retained; Q8_0 is only the recommendation and missing/invalid-selection default."
+  ]
+}

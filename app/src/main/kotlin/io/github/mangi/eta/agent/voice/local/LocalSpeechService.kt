@@ -35,6 +35,7 @@ class LocalSpeechService : Service() {
         main.postDelayed(watchdog, 2_000)
         try { recognizer.release() } finally { releasing.set(false); main.removeCallbacks(watchdog) }
     }
+    private val deletion = LocalSpeechDeletionGate() // main-thread admission; worker handles actual release/removal
     private var idleTimer: Runnable? = null
     private var retentionGeneration = 0L // main-thread START/stopSelf race guard
     @Volatile private var destroyed = false
@@ -48,6 +49,7 @@ class LocalSpeechService : Service() {
         val finishing = AtomicBoolean()
         var audio: LocalSpeechPcmAccumulator? = LocalSpeechPcmAccumulator(silence)
         val native = AtomicBoolean()
+        val utterance = LocalSpeechUtterance() // session-owned, worker-only
         var recognizer: LocalSpeechRecognizer? = null // only accessed on worker
         var sequence = 0
         @Volatile var endpoint = false
@@ -62,6 +64,7 @@ class LocalSpeechService : Service() {
         if (msg.sendingUid != Process.myUid()) return@Handler true
         val id = msg.data.getString(LocalSpeechProtocol.ID) ?: return@Handler true
         when (msg.what) {
+            LocalSpeechProtocol.DELETE -> deleteModel(msg, id)
             LocalSpeechProtocol.START -> start(msg, id)
             LocalSpeechProtocol.CANCEL -> active?.takeIf { it.id == id }?.let { close(it) }
             else -> active?.takeIf { it.id == id && !it.cancelled.get() }?.let { s ->
@@ -82,11 +85,21 @@ class LocalSpeechService : Service() {
                                             check(n > 0) { "本机离线音频管道提前关闭" }; offset += n
                                         }
                                         val endpoint = checkNotNull(s.audio).append(audio)
+                                        s.native.set(true)
+                                        try {
+                                            s.utterance.stream?.accept(audio)?.let { reply(s, LocalSpeechProtocol.PARTIAL, it) }
+                                        } finally { s.native.set(false) }
                                         if (endpoint) { s.endpoint = true; reply(s, LocalSpeechProtocol.ENDPOINT) }
                                         s.pending.set(false)
                                         reply(s, LocalSpeechProtocol.ACK, sequence = sequence)
                                     }
-                                } catch (e: Exception) { fail(s, SpeechErrorCode.AUDIO, e.message ?: "本机离线音频读取失败") }
+                                } catch (e: Exception) {
+                                    cache.trim(); fail(s, SpeechErrorCode.AUDIO, "本机离线音频读取或流式解码失败，请重试；音频未上传")
+                                } catch (e: LinkageError) {
+                                    cache.trim(); fail(s, SpeechErrorCode.CONFIGURATION, "本机离线原生解码失败，请重新安装完整版")
+                                } catch (e: OutOfMemoryError) {
+                                    cache.trim(); fail(s, SpeechErrorCode.STORAGE, "本机离线解码内存不足，音频未上传")
+                                }
                             }
                         }
                     }
@@ -103,11 +116,67 @@ class LocalSpeechService : Service() {
         }
         true
     })
+    private fun deleteModel(message: Message, requestId: String) {
+        val remote = message.replyTo ?: return
+        val modelId = message.data.getString(LocalSpeechProtocol.MODEL).orEmpty()
+        fun respond(what: Int, text: String, code: SpeechErrorCode? = null) {
+            runCatching { remote.send(Message.obtain(null, what).apply { data = Bundle().apply {
+                putString(LocalSpeechProtocol.ID, requestId)
+                putString(LocalSpeechProtocol.MODEL, modelId)
+                putString(LocalSpeechProtocol.TEXT, text)
+                code?.let { putString(LocalSpeechProtocol.CODE, it.name) }
+            } }) }
+        }
+        if (runCatching { LocalSpeechRegistry.model(this, modelId) }.isFailure) {
+            respond(LocalSpeechProtocol.ERROR, "请选择目录中的本机模型", SpeechErrorCode.CONFIGURATION)
+            return
+        }
+        val deadline = message.data.getLong(LocalSpeechProtocol.DELETE_DEADLINE)
+        val now = SystemClock.elapsedRealtime()
+        if (!localSpeechDeletionIsLive(deadline, now)) {
+            respond(LocalSpeechProtocol.ERROR, "删除请求已过期，未删除模型文件，请刷新状态后重试", SpeechErrorCode.TIMEOUT)
+            return
+        }
+        // Both handlers run on main: a queued START cannot slip between admission and eviction.
+        // Reject even a closing/cancelled session until worker has completed stream/cache cleanup.
+        if (destroyed || !deletion.begin(active != null)) {
+            respond(LocalSpeechProtocol.ERROR, "本机离线正在录音、加载、识别或删除，请先停止并等待完成后再删除", SpeechErrorCode.BACKPRESSURE)
+            return
+        }
+        retentionGeneration++
+        idleTimer?.let { main.removeCallbacks(it) }; idleTimer = null
+        worker.execute {
+            try {
+                fun checkDeadline() {
+                    if (!localSpeechDeletionIsLive(deadline, SystemClock.elapsedRealtime())) throw SpeechFailure(SpeechErrorCode.TIMEOUT,
+                        "删除请求已过期，未删除模型文件，请刷新状态后重试")
+                }
+                checkDeadline() // never execute a stale request after the client has timed out
+                val result = runBlocking {
+                    deleteIdleLocalSpeechModel(cache) {
+                        checkDeadline() // native release must not extend permission to start removal
+                        LocalSpeechModelStore.deleteInstalledModel(this@LocalSpeechService, modelId, ::checkDeadline)
+                    }
+                }
+                // This is the only success path: release and descriptor-relative removal/readback finished.
+                respond(LocalSpeechProtocol.DELETED, result.detail)
+            } catch (e: SpeechFailure) {
+                respond(LocalSpeechProtocol.ERROR, e.userMessage, e.code)
+            } catch (_: Throwable) {
+                respond(LocalSpeechProtocol.ERROR, "模型删除未确认，可能已部分删除；请刷新状态后重试", SpeechErrorCode.STORAGE)
+            } finally {
+                main.post {
+                    deletion.finish()
+                    if (!destroyed) { scheduleIdle(); stopSelf() }
+                }
+            }
+        }
+    }
     private fun start(message: Message, id: String) {
         val pfd = message.data.getParcelable(LocalSpeechProtocol.PIPE, ParcelFileDescriptor::class.java) ?: return
         val remote = message.replyTo
         if (remote == null) { pfd.close(); return }
-        if (active != null || destroyed) {
+        if (active != null || destroyed || deletion.inProgress) {
             pfd.close()
             runCatching { remote.send(Message.obtain(null, LocalSpeechProtocol.ERROR).apply { data = Bundle().apply {
                 putString(LocalSpeechProtocol.ID, id); putString(LocalSpeechProtocol.CODE, SpeechErrorCode.BACKPRESSURE.name)
@@ -163,6 +232,10 @@ class LocalSpeechService : Service() {
                 }
                 s.pendingRecognizer = null // cache now owns it, including across cancellation
                 s.recognizer = recognizer // borrowed, never session-owned
+                s.native.set(true)
+                try {
+                    if (!s.cancelled.get()) s.utterance.stream = recognizer.openStream()
+                } finally { s.native.set(false) }
                 Log.i("EtaLocalSpeech", "provider=local model-cache=${if (hit) "hit" else "miss"} " +
                     "hash-ms=$hashMs cold-load-ms=$loadMs ready-ms=${SystemClock.elapsedRealtime() - prepareStart}")
                 main.post {
@@ -188,36 +261,30 @@ class LocalSpeechService : Service() {
         try {
             if (s.cancelled.get()) return
             val audio = checkNotNull(s.audio)
-            if (!audio.hasVoice || audio.size == 0) {
-                fail(s, SpeechErrorCode.NO_SPEECH, "未检测到清晰语音，请重试")
-                return
-            }
             val recognizer = checkNotNull(s.recognizer)
-            val parts = mutableListOf<String>()
-            val count = audio.size / 2
-            val model = LocalSpeechRegistry.model(this, s.modelId)
-            // Qwen's native context is bounded to ten seconds. Hard boundaries can cut words.
-            // SenseVoice processes the entire bounded utterance. Nothing is silently truncated.
-            val segmentSamples = if (model.architecture == "qwen3_asr") 160_000 else 480_000
-            for (start in 0 until count step segmentSamples) {
-                if (s.cancelled.get()) return
-                val text = recognizer.recognize(audio.samples(start, minOf(segmentSamples, count - start))).trim()
-                check(text.toByteArray(Charsets.UTF_8).size <= LocalSpeechProtocol.MAX_TEXT_BYTES) { "识别文本过长，请缩短语音" }
-                if (text.isNotEmpty()) parts += text
-            }
-            val text = parts.joinToString(" ").trim()
-            if (text.isEmpty()) {
-                fail(s, SpeechErrorCode.NO_SPEECH, "未识别到文字，请重试")
-                return
-            }
-            check(text.toByteArray(Charsets.UTF_8).size <= LocalSpeechProtocol.MAX_TEXT_BYTES) { "识别文本过长，请缩短语音" }
-            // Stream is already released. Complete PCM/FD/reply/lease cleanup before FINAL.
+            val text = s.utterance.finish(audio) { recognizeOffline(s, audio, recognizer) }
+            // Session decoder is released by close before FINAL; the model remains in the warm cache.
             main.post { close(s, text) }
         } catch (e: SpeechFailure) { fail(s, e.code, e.userMessage) }
         catch (e: Exception) { cache.trim(); fail(s, SpeechErrorCode.PROTOCOL, "本机模型解码失败，请缩短语音或检查模型后重试；音频未上传") }
         catch (e: LinkageError) { cache.trim(); fail(s, SpeechErrorCode.CONFIGURATION, "本机离线原生解码失败，请重新安装完整版") }
         catch (e: OutOfMemoryError) { cache.trim(); fail(s, SpeechErrorCode.STORAGE, "本机离线解码内存不足，音频未上传") }
         finally { s.native.set(false) }
+    }
+    private fun recognizeOffline(s: Session, audio: LocalSpeechPcmAccumulator, recognizer: LocalSpeechRecognizer): String {
+        val parts = mutableListOf<String>()
+        val count = audio.size / 2
+        val model = LocalSpeechRegistry.model(this, s.modelId)
+        // Qwen's native context is bounded to ten seconds. Hard boundaries can cut words.
+        // SenseVoice processes the entire bounded utterance. Nothing is silently truncated.
+        val segmentSamples = if (model.architecture == "qwen3_asr") 160_000 else 480_000
+        for (start in 0 until count step segmentSamples) {
+            if (s.cancelled.get()) return ""
+            val text = recognizer.recognize(audio.samples(start, minOf(segmentSamples, count - start))).trim()
+            check(text.toByteArray(Charsets.UTF_8).size <= LocalSpeechProtocol.MAX_TEXT_BYTES) { "识别文本过长，请缩短语音" }
+            if (text.isNotEmpty()) parts += text
+        }
+        return parts.joinToString(" ").trim()
     }
     private fun reply(s: Session, what: Int, text: String = "", sequence: Int = 0, code: SpeechErrorCode? = null) {
         if (s.cancelled.get()) return
@@ -251,9 +318,15 @@ class LocalSpeechService : Service() {
         main.postDelayed(watchdog, 2_000)
         worker.execute {
             try {
-                s.recognizer = null; s.audio = null
-                val now = SystemClock.elapsedRealtime()
-                if (!cache.finish(s, now)) cache.finishUnborrowed(now)
+                // Always free the utterance before cache.finish may release its model.
+                s.native.set(true)
+                try {
+                    s.utterance.closeBeforeCache(onCloseFailure = { cache.trim() }) {
+                        s.recognizer = null; s.audio = null
+                        val now = SystemClock.elapsedRealtime()
+                        if (!cache.finish(s, now)) cache.finishUnborrowed(now)
+                    }
+                } finally { s.native.set(false) }
             } finally {
                 s.closed.set(true)
                 main.post {

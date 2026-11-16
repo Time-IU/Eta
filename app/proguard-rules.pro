@@ -79,3 +79,9 @@
 
 # GGUF JNI names are a stable native ABI.
 -keep class io.github.mangi.eta.agent.voice.local.GgufSpeechNative { *; }
+
+# Vosk's official Android demo rules: JNA uses reflection and native dispatch.
+# https://github.com/alphacep/vosk-android-demo/blob/master/app/proguard-rules.pro
+-keep class com.sun.jna.* { *; }
+-keepclassmembers class * extends com.sun.jna.* { public *; }
+-dontwarn java.awt.**

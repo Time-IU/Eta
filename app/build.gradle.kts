@@ -149,6 +149,8 @@ androidComponents {
 
 dependencies {
     coreLibraryDesugaring(libs.desugar.jdk.libs.nio)
+    // Official Android AAR (Maven Central); includes the JNA Android AAR transitively.
+    implementation("com.alphacephei:vosk-android:0.3.75")
     implementation(libs.jsoup)
     implementation(libs.commons.compress)
     implementation(libs.xz)

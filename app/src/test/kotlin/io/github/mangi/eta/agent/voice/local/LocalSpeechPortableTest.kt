@@ -181,11 +181,11 @@ class LocalSpeechPortableTest {
         val file = listOfNotNull(configured, File("app/src/main/assets/local_speech/catalog.json"), File("src/main/assets/local_speech/catalog.json")).firstOrNull { it.isFile }
         return requireNotNull(file) { "Pass -Deta.localSpeechCatalog=/path/to/catalog.json" }.readText()
     }
-    @Test fun actualSixEntryCatalogParsedWithoutNativeRuntime() {
+    @Test fun actualEightEntryCatalogParsedWithoutNativeRuntime() {
         val models = LocalSpeechRegistry.parse(catalogText())
-        assertEquals(6, models.size); assertEquals(5, models.count { it.engine == LocalSpeechBackend.GGUF })
+        assertEquals(8, models.size); assertEquals(5, models.count { it.engine == LocalSpeechBackend.GGUF })
         val int8 = models.single { it.id == "sensevoice_small_int8" }
-        assertTrue(int8.recommended); assertEquals(2, int8.files.size)
+        assertFalse(int8.recommended); assertEquals(2, int8.files.size)
         assertEquals(239549735L, int8.sizeBytes)
     }
     @Test fun catalogMutableRevisionsAndUnsafePathsRejected() {

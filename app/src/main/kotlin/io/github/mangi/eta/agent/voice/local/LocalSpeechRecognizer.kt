@@ -11,6 +11,7 @@ import java.io.File
 internal interface LocalSpeechRecognizer {
     fun recognize(pcm: FloatArray): String
     fun release()
+    fun openStream(): LocalSpeechStreamingSession? = null
     companion object {
         fun create(dir: File, model: LocalSpeechModelDescriptor): LocalSpeechRecognizer = when (model.engine) {
             LocalSpeechBackend.GGUF -> {
@@ -21,6 +22,7 @@ internal interface LocalSpeechRecognizer {
                     override fun release() = GgufSpeechNative.release(handle)
                 }
             }
+            LocalSpeechBackend.VOSK -> VoskSpeechRecognizer.load(dir)
             LocalSpeechBackend.SENSEVOICE_ONNX -> {
                 val recognizer = OfflineRecognizer(config = OfflineRecognizerConfig(modelConfig = OfflineModelConfig(
                     senseVoice = OfflineSenseVoiceModelConfig(model = File(dir, "model.int8.onnx").absolutePath,
@@ -41,4 +43,10 @@ internal interface LocalSpeechRecognizer {
             }
         }
     }
+}
+
+/** Session-owned streaming state, closed before returning the cached model lease. */
+internal interface LocalSpeechStreamingSession : AutoCloseable {
+    fun accept(pcm: ByteArray): String?
+    fun finish(): String
 }

@@ -16,16 +16,14 @@ internal object LocalSpeechDownload {
     suspend fun fetch(model: LocalSpeechModelDescriptor, stage: File, progress: (LocalSpeechProgress) -> Unit) {
         var completed = 0L
         progress(LocalSpeechProgress(LocalSpeechStage.DOWNLOADING, 0, model.sizeBytes))
-        for (file in model.files) {
+        for (file in model.archive?.let { listOf(it) } ?: model.files) {
             currentCoroutineContext().ensureActive()
             var url = URI(file.pinnedUrl)
             var connection: HttpURLConnection? = null
             try {
                 for (redirect in 0..8) {
                     currentCoroutineContext().ensureActive()
-                    val host = url.host.orEmpty()
-                    require(url.scheme == "https" && url.userInfo == null && (url.port == -1 || url.port == 443) &&
-                        (host == "huggingface.co" || host.endsWith(".huggingface.co") || host.endsWith(".hf.co"))) { "模型下载重定向不安全" }
+                    require(allowedUrl(model, url)) { "模型下载重定向不安全" }
                     val c = (url.toURL().openConnection() as HttpURLConnection).apply {
                         instanceFollowRedirects = false; connectTimeout = 15_000; readTimeout = 5_000
                         setRequestProperty("Accept-Encoding", "identity")
@@ -46,6 +44,11 @@ internal object LocalSpeechDownload {
                         progress(LocalSpeechProgress(LocalSpeechStage.DOWNLOADING, base + n, model.sizeBytes))
                     } }
                     completed += file.sizeBytes
+                    if (model.engine == LocalSpeechBackend.VOSK) {
+                        val archive = File(stage, file.name)
+                        try { LocalSpeechVoskArchive.unpack(model, stage, archive, progress) }
+                        finally { check(archive.delete()) { "无法清理临时模型压缩包" } }
+                    }
                     break
                 }
             } catch (e: CancellationException) { throw e }
@@ -56,9 +59,19 @@ internal object LocalSpeechDownload {
             finally { connection?.disconnect() }
         }
     }
-    internal suspend fun copyExact(input: InputStream, output: File, expected: Long, progress: (Long) -> Unit) {
+    internal fun allowedUrl(model: LocalSpeechModelDescriptor, url: URI): Boolean {
+        if (model.engine == LocalSpeechBackend.VOSK) {
+            // No arbitrary official-host files, query strings, credentials, alternate ports, or CDN redirects.
+            return url.toASCIIString() == LocalSpeechRegistry.voskUrl(model.id)
+        }
+        val host = url.host.orEmpty()
+        return url.scheme == "https" && url.userInfo == null && (url.port == -1 || url.port == 443) &&
+            (host == "huggingface.co" || host.endsWith(".huggingface.co") || host.endsWith(".hf.co"))
+    }
+    internal suspend fun copyExact(input: InputStream, output: File, expected: Long, expectedSha256: String? = null, progress: (Long) -> Unit) {
         require(!output.exists()) { "临时文件重复" }
         val coroutine = currentCoroutineContext(); val buffer = ByteArray(64 * 1024); var bytes = 0L
+        val digest = expectedSha256?.let { java.security.MessageDigest.getInstance("SHA-256") }
         val stream = try { output.outputStream() } catch (_: java.io.IOException) {
             throw SpeechFailure(SpeechErrorCode.STORAGE, "无法创建模型临时文件，请检查存储空间和权限")
         }
@@ -71,9 +84,13 @@ internal object LocalSpeechDownload {
                 try { sink.write(buffer, 0, n) } catch (_: java.io.IOException) {
                     throw SpeechFailure(SpeechErrorCode.STORAGE, "模型写入失败，请释放存储空间后重试；已有文件保留")
                 }
+                digest?.update(buffer, 0, n)
                 bytes += n; progress(bytes)
             }
             require(bytes == expected) { "文件不完整或不属于所选模型" }
+            if (digest != null) require(digest.digest().joinToString("") { "%02x".format(it.toInt() and 255) } == expectedSha256) {
+                "模型写入流 SHA-256 不匹配"
+            }
             try { sink.fd.sync() } catch (_: java.io.IOException) {
                 throw SpeechFailure(SpeechErrorCode.STORAGE, "模型文件同步失败，请检查存储空间后重试")
             }

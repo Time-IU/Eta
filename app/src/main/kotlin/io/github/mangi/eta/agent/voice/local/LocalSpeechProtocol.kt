@@ -6,8 +6,13 @@ internal object LocalSpeechProtocol {
     const val PCM = 2
     const val FINISH = 3
     const val CANCEL = 4
+    const val DELETE = 5
+    const val DELETED = 16
+    const val DELETE_MS = 90_000L
+    const val DELETE_DEADLINE = "deleteDeadlineElapsedMs"
     const val READY = 10
     const val ACK = 11
+    const val PARTIAL = 12
     const val ENDPOINT = 13
     const val FINAL = 14
     const val ERROR = 15

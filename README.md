@@ -6,7 +6,9 @@
 >
 > **定制内容、安装/签名提醒及验证边界请先看 [定制说明](docs/custom/README.md)** · [变更记录](docs/custom/CHANGELOG-3.4.4.md) · [源码映射](docs/custom/MODIFICATIONS.md)。
 >
-> 以下保留上游 README 原文，原文中的下载、徽章及部分链接指向上游；不代表本 fork 已发布或提交 PR。定制问题请先向 [本 fork](https://github.com/Time-IU/Eta/issues) 反馈。
+> 本次定制更新：[custom.4 模型管理与 Vosk 接入](docs/custom/CHANGELOG-custom.4.md)，SenseVoice Q8_0 唯一推荐，八款模型支持删除权重并保留引擎。定制安装包请看[本 fork Releases](https://github.com/Time-IU/Eta/releases)。
+>
+> 以下保留上游 README 原文，原文中的下载、徽章及部分链接指向上游；不代表定制改动已向上游提交 PR。定制问题请先向 [本 fork](https://github.com/Time-IU/Eta/issues) 反馈。
 <!-- /time-iu-custom-fork-banner -->
 
 <h1 align="center">Eta</h1>

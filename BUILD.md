@@ -51,6 +51,41 @@ sh ./gradlew --no-daemon :app:testDebugUnitTest \
 
 如需全项目检查，另行运行 `:app:lintDebug :app:testDebugUnitTest`。这些更广泛检查未被本页的 153 项结果代替。实机还需验证收音、停顿、取消、音频焦点、后台回收、ROM 电源键路由、选区和窄屏布局；ART 校验不能代替它们。
 
+### custom.4 的构建与选定回归
+
+当前版本说明及结果见 [custom.4 变更](docs/custom/CHANGELOG-custom.4.md) 和 [公开验证摘要](docs/custom/validation-custom.4.json)。版本元数据使用 `-Peta.buildMetadata=custom.4-model-manager`；未修改上游 versionCode，也不自动迁移已保存模型选择。
+
+以下是对应 237 项选定回归的可重放入口。`ETA_VOSK_OFFICIAL_CACHE` 指向仓库外目录，放入 [Vosk 说明](docs/custom/vosk-models.md) 指定的两个官方原 ZIP，并核对摘要。未指定缓存时真包测试会明确跳过，不会隐式联网；这种运行不能声称复现 237 项零跳过。
+
+```sh
+export ETA_VOSK_OFFICIAL_CACHE=/absolute/path/to/vosk-official-cache
+# 仅为复现本次 Linux aarch64 环境启用这两套明确排除；其他主机不要盲目设置。
+export ETA_MODEL_MANAGER_ARM64_EXCLUSIONS=1
+# 本次先构建未签名包，后用既有定制证书签名；该项不提供或导出任何私钥。
+export ETA_MODEL_MANAGER_UNSIGNED=1
+sh ./gradlew --no-daemon --console=plain --max-workers=2 \
+  -I scripts/custom/verify-model-manager.init.gradle \
+  -Peta.buildMetadata=custom.4-model-manager \
+  -Pkotlin.compiler.execution.strategy=in-process \
+  :app:assembleDebug :app:testDebugUnitTest \
+  --tests 'io.github.mangi.eta.agent.voice.local.*' \
+  --tests 'io.github.mangi.eta.agent.voice.qwen.*' \
+  --tests 'io.github.mangi.eta.ui.voice.*' \
+  --tests 'io.github.mangi.eta.agent.voice.*SpeechLifecycleTest' \
+  --tests 'io.github.mangi.eta.agent.voice.SpeechEndpointDetectorTest' \
+  --tests 'io.github.mangi.eta.agent.voice.SystemTtsPolicyTest' \
+  --tests 'io.github.mangi.eta.agent.voice.SystemVoicePolicyTest' \
+  --tests 'io.github.mangi.eta.ui.components.custom.*' \
+  --tests 'io.github.mangi.eta.ui.components.AgentChatScrollPolicyTest' \
+  --tests 'io.github.mangi.eta.agent.overlay.*'
+```
+
+ARM64 仍需按环境指定 `-Pandroid.aapt2FromMavenOverride=/absolute/path/to/aapt2`（实际文件名为 `aapt2`）。本次使用 2300 MiB Gradle heap、640 MiB metaspace、Java 25 与预先验证的原生 AAPT2；不以降低 SDK/AGP 来适配工具。构建环境的隔离挂载属于宿主环境配置，不要求其他开发者照搬设备私有路径。
+
+本次明确排除：`SystemVoicePolicyTest`（SDK28 fixture 低于 minSdk33）、`CustomMessageSaveControllerTest`（Robolectric API36 native runtime 不支持 Linux aarch64）。排除由可选 init 配置显式打印，不修改产品源码，不把两项环境失败算作通过。237 项包含新增删除 21 项、推荐 5 项、两个官方 ZIP 的生产导入。正常主机可不设排除变量以运行更广泛验证，但结果应以实际输出为准。
+
+原始完整构建成功，包装脚本曾因误猜 APK 文件名在复制阶段退出 91；已从实际 Gradle 输出取回同一未签名产物并校验，不把包装失败隐藏为编译失败或重新构建成功。最终 APK 的签名和非签名载荷一致、ART 严格验证、独立 root scratch 生产删除探针均通过；App UID/Binder/native-cache 全链路、真实语音及界面视觉仍待验收。
+
 ## 3. 原生运行库
 
 应用构建默认使用 `app/src/main/jniLibs/arm64-v8a/` 中的对应预编译运行库。因此普通 APK 构建不会自动重新编译整个 transcribe.cpp。额外的原生库及源码来源、SHA-256 见 [THIRD_PARTY.md](THIRD_PARTY.md) 与 `docs/custom/native-artifacts.json`。

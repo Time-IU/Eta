@@ -26,9 +26,11 @@
 
 | 行为 | 前缀下的主要路径 |
 | --- | --- |
-| 单一 LOCAL 入口与六模型信息 | `ui/voice/LocalSpeechSettings.kt`、`LocalSpeechModelInfo.kt`、`agent/voice/local/LocalSpeechManifest.kt`、`LocalSpeechRegistry.kt` |
+| 单一 LOCAL 入口、八模型信息与推荐 | `ui/voice/LocalSpeechSettings.kt`、`LocalSpeechModelInfo.kt`、`agent/voice/local/LocalSpeechManifest.kt`、`LocalSpeechRegistry.kt` |
 | 私有模型安装、导入、下载与 SHA-256 验证 | `agent/voice/local/LocalSpeechModelStore.kt`、`LocalSpeechDownload.kt`、`LocalSpeechImport.kt`、`LocalSpeechValidation.kt` |
 | 本地引擎生命周期与 JNI 接入 | `agent/voice/local/LocalSpeechService.kt`、`LocalSpeechEngine.kt`、`LocalSpeechRecognizer.kt`、`GgufSpeechNative.kt`；兼容路径 `agent/voice/qwen/`、`agent/voice/offline/` |
+| Vosk 流式解码、官方 ZIP 与 IPC 事件泵 | `agent/voice/local/VoskSpeechRecognizer.kt`、`LocalSpeechVoskArchive.kt`、`LocalSpeechClientSession.kt`、`LocalSpeechUtterance.kt` |
+| 显式删除、服务确认与安全文件操作 | `agent/voice/local/LocalSpeechDeletion.kt`、`LocalSpeechDeletionClient.kt`、`LocalSpeechModelLock.kt`、`LocalSpeechSafeDelete.kt` 及上述 Store/Service/设置页 |
 | 两分钟空闲热缓存策略 | `agent/voice/qwen/QwenWarmCache.kt`、`WarmCachePolicy.kt` 及 `agent/voice/local/LocalSpeechService.kt` |
 | 系统 TTS ISO3/Oplus 别名与严格离线音色 | `agent/voice/SystemSpeechPlayback.kt`、`SpeechPlaybackController.kt`、`ui/voice/SystemTtsSettings.kt` |
 | 采集侧能量 VAD 与停顿终点 | `agent/voice/SpeechEndpointDetector.kt`、`EndpointSpeechAudioCapture.kt`、`SpeechInputController.kt`、`FileSpeechRecognition.kt`、`StreamingSpeechRecognition.kt` |
@@ -39,8 +41,8 @@
 
 ## 非 Kotlin 文件与许可证
 
-- `app/src/main/assets/local_speech/catalog.json`：六模型格式、精确磁盘字节数、逐文件 SHA-256 和固定 revision 下载来源；无权重。它是模型展示信息的依据，不是全设备准确率测评。
-- `app/src/main/assets/local_speech/licenses/`：Qwen 模型 Apache-2.0、SenseVoice Model License 及 NOTICE。SenseVoice 是 FunASR Model Open Source License Agreement v1.1，不等于 runtime MIT 或 Sherpa Apache。
+- `app/src/main/assets/local_speech/catalog.json`：八模型格式、精确磁盘字节数、逐文件 SHA-256 和固定 revision 下载来源；无权重。它是模型展示信息的依据，不是全设备准确率测评。
+- `app/src/main/assets/local_speech/licenses/`：Qwen/Vosk 模型 Apache-2.0、SenseVoice Model License 及 NOTICE；Vosk/JNA/libffi 许可另保留于 `assets/licenses/vosk-jna/`。SenseVoice 是 FunASR Model Open Source License Agreement v1.1，不等于 runtime MIT 或 Sherpa Apache。
 - `app/src/main/cpp/local-speech/`：引入的 [transcribe.cpp](https://github.com/handy-computer/transcribe.cpp) runtime 源码及 Eta JNI 接入 `eta_transcribe_jni.cpp`；相关许可同时保留在 `app/src/main/assets/licenses/transcribe/`。引入 runtime 不是原创实现模型或上游第三方运行库。
 - `app/src/main/assets/qwen_asr/`、`app/src/main/assets/offline_asr/`：兼容引擎元数据与许可；Sherpa ONNX/NCNN 是 Apache-2.0、ONNX Runtime 是 MIT、NCNN 是 BSD-3-Clause，模型许可仍独立。
 - `app/src/main/jniLibs/arm64-v8a/`：对应运行库；native 构建与来源说明见 [BUILD.md](../../BUILD.md) 和 [THIRD_PARTY.md](../../THIRD_PARTY.md)，本页不另立构建流程。
@@ -64,4 +66,4 @@
 - `agent/voice/`：生命周期、播放、系统音色/语言策略、停顿检测；`local/`、`qwen/` 子目录覆盖本地模型相关逻辑。
 - `data/repository/AgentMemoryManualAppendTest.kt`、`core/AssistantEntryRoutingTest.kt`：手动记忆与入口策略。
 
-最终预览交付记录为 153 测试、0 失败、0 跳过，构建与 ART 验证通过；本轮只整理文档，不运行构建。最终安装和现场麦克风未确认；个人日用反馈不替代设备兼容矩阵。文件名、大小及 SHA-256 见[变更记录](CHANGELOG-3.4.4.md#最终预览构建记录)。
+当前 custom.4 完整构建与 237 项选定回归、签名和 ART 验证记录见 [custom.4 变更](CHANGELOG-custom.4.md)；明确排除两套既有环境不兼容套件，不能称为全项目全测。未安装覆盖日用版；独立 root scratch 删除探针不替代 App UID、Binder/cache、真实语音与视觉验收。早期 153 项预览记录仍保留在[历史变更](CHANGELOG-3.4.4.md#最终预览构建记录)。

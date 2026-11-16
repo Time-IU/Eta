@@ -23,7 +23,6 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.ReceiveChannel
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
-import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import java.util.UUID
@@ -34,6 +33,8 @@ object LocalSpeechEngine {
     fun selectedModelId(context: Context): String = LocalSpeechModelStore.selectedId(context)
     fun setSelectedModelId(context: Context, id: String) = LocalSpeechModelStore.selectModel(context, id)
     fun modelSummary(context: Context): String = availableModels(context).firstOrNull { it.id == selectedModelId(context) }?.displayName ?: "请选择本机模型"
+
+    suspend fun deleteModel(context: Context, id: String): LocalSpeechInstallation = LocalSpeechModelStore.deleteModel(context, id)
 
     suspend fun recognize(
         context: Context,
@@ -48,12 +49,11 @@ object LocalSpeechEngine {
         val app = context.applicationContext
         val modelId = LocalSpeechModelStore.selectedId(app) // Snapshot only in main process.
         val id = UUID.randomUUID().toString()
-        data class Event(val what: Int, val sequence: Int, val text: String, val code: String)
-        val events = Channel<Event>(16)
+        val events = Channel<LocalSpeechEvent>(16)
         val connected = CompletableDeferred<IBinder>()
         val reply = Messenger(Handler(Looper.getMainLooper()) { msg ->
             if (msg.data.getString(LocalSpeechProtocol.ID) == id) {
-                if (events.trySend(Event(msg.what, msg.arg1, msg.data.getString(LocalSpeechProtocol.TEXT).orEmpty(),
+                if (events.trySend(LocalSpeechEvent(msg.what, msg.arg1, msg.data.getString(LocalSpeechProtocol.TEXT).orEmpty(),
                     msg.data.getString(LocalSpeechProtocol.CODE).orEmpty())).isFailure)
                     events.close(SpeechFailure(SpeechErrorCode.BACKPRESSURE, "本机离线本地识别消息过多，请重试"))
             }
@@ -76,7 +76,6 @@ object LocalSpeechEngine {
         var bound = false
         val pipe = ParcelFileDescriptor.createPipe()
         val output = ParcelFileDescriptor.AutoCloseOutputStream(pipe[1])
-        var endpoint = false
         fun send(what: Int, sequence: Int = 0, size: Int = 0) {
             checkNotNull(remote).send(Message.obtain(null, what).apply {
                 arg1 = sequence; arg2 = size; replyTo = reply
@@ -89,30 +88,10 @@ object LocalSpeechEngine {
                 }
             })
         }
-        fun error(event: Event): Nothing = throw SpeechFailure(
-            SpeechErrorCode.entries.firstOrNull { it.name == event.code } ?: SpeechErrorCode.PROTOCOL,
-            event.text.ifBlank { "本机离线本地识别失败，请重试" },
+        val session = LocalSpeechClientSession(events, endpointSilenceMs,
+            onPartial = { withContext(Dispatchers.Main.immediate) { onPartial(it) } },
+            onEndpoint = { withContext(Dispatchers.Main.immediate) { onEndpoint() } },
         )
-        suspend fun accept(event: Event) {
-            when (event.what) {
-                LocalSpeechProtocol.ERROR -> error(event)
-                LocalSpeechProtocol.ENDPOINT -> if (!endpoint && endpointSilenceMs > 0) {
-                    endpoint = true; withContext(Dispatchers.Main.immediate) { onEndpoint() }
-                }
-                else -> throw SpeechFailure(SpeechErrorCode.PROTOCOL, "本机离线返回了意外的本地消息")
-            }
-        }
-        suspend fun await(what: Int, sequence: Int = 0): String {
-            while (true) {
-                val event = events.receive()
-                if (event.what == what) {
-                    if (what == LocalSpeechProtocol.ACK && event.sequence != sequence)
-                        throw SpeechFailure(SpeechErrorCode.PROTOCOL, "本机离线音频确认序号不匹配")
-                    return event.text
-                }
-                accept(event)
-            }
-        }
         suspend fun <T> phase(millis: Long, message: String, block: suspend () -> T): T = try {
             withTimeout(millis) { block() }
         } catch (e: TimeoutCancellationException) {
@@ -129,38 +108,22 @@ object LocalSpeechEngine {
                 service.linkToDeath(death, 0); linked = true; remote = Messenger(service)
                 send(LocalSpeechProtocol.START)
                 pipe[0].close() // Binder owns a duplicated FD in the remote process.
-                await(LocalSpeechProtocol.READY)
+                session.await(LocalSpeechProtocol.READY)
             }
             withContext(Dispatchers.Main.immediate) { begin() }
             phase(LocalSpeechProtocol.CAPTURE_MS, "本机离线录音等待超时，单次录音最长 30 秒") {
-                var sequence = 0; var bytes = 0L
-                while (!endpoint) {
-                    val frame = select<ByteArray?> {
-                        frames.onReceiveCatching { result -> result.exceptionOrNull()?.let { throw it }; result.getOrNull() }
-                        events.onReceive { event -> accept(event); null }
-                    } ?: break
-                    if (frame.size % 2 != 0) throw SpeechFailure(SpeechErrorCode.AUDIO, "本机离线需要完整的 PCM16 采样")
-                    bytes += frame.size
-                    if (bytes > LocalSpeechProtocol.MAX_AUDIO_BYTES) throw SpeechFailure(SpeechErrorCode.AUDIO,
-                        "本机离线单次录音最长 30 秒，请缩短语音后重试（超长音频未被静默截断）")
-                    var offset = 0
-                    while (offset < frame.size && !endpoint) {
-                        val size = minOf(LocalSpeechProtocol.FEED_CHUNK, frame.size - offset)
-                        // One 3200-byte chunk in flight. Pipe capacity exceeds this bounded write.
-                        output.write(frame, offset, size)
-                        send(LocalSpeechProtocol.PCM, ++sequence, size)
-                        await(LocalSpeechProtocol.ACK, sequence)
-                        offset += size
-                    }
+                session.capture(frames) { frame, offset, size, sequence ->
+                    // One bounded chunk in flight; the session waits for its matching ACK.
+                    output.write(frame, offset, size)
+                    send(LocalSpeechProtocol.PCM, sequence, size)
                 }
             }
             output.close()
             val text = phase(LocalSpeechProtocol.DECODE_MS + 5_000, "本机离线本地解码超过 120 秒，请重试") {
-                send(LocalSpeechProtocol.FINISH)
-                await(LocalSpeechProtocol.FINAL)
+                session.finish { send(LocalSpeechProtocol.FINISH) }
             }
             if (text.isBlank()) throw SpeechFailure(SpeechErrorCode.NO_SPEECH, "本机离线未识别到文字，请重试")
-            // Non-streaming backend: no partial callbacks, including no duplicate final-as-partial callback.
+            // FINAL is returned once, never duplicated as a partial callback.
             text
         } catch (e: CancellationException) { throw e }
         catch (e: SpeechFailure) { throw e }
