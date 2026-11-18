@@ -6,6 +6,8 @@
 
 ## 文档导航
 
+- [custom.5：聊天查找、显示修复与厂商接管适配（图解）](RELEASE-custom.5.md) · [验证摘要](validation-custom.5.json)
+
 - [custom.4：模型删除、Q8_0 推荐与 Vosk 接入](CHANGELOG-custom.4.md) · [验证摘要](validation-custom.4.json)
 - [Vosk 两款官方中文模型与导入/删除边界](vosk-models.md)
 - [custom.2：系统 TTS 操作区对齐](CHANGELOG-custom.2.md)

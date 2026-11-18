@@ -4,7 +4,9 @@
 >
 > See [custom documentation](docs/custom/README.md), [changes](docs/custom/CHANGELOG-3.4.4.md), and [source map](docs/custom/MODIFICATIONS.md) for scope, signing/data precautions, and validation limits. Report fork-specific issues to [this fork](https://github.com/Time-IU/Eta/issues).
 >
-> Custom update: [custom.4 model management and Vosk integration](docs/custom/CHANGELOG-custom.4.md). SenseVoice Q8_0 is the sole recommendation; all eight models support confirmed weight removal while keeping their engines. Custom APKs are provided through [this fork's Releases](https://github.com/Time-IU/Eta/releases).
+> Custom update: [custom.5 conversation search and display fixes](docs/custom/RELEASE-custom.5.md): full-conversation text search, adaptive model menus, and retained Breeno / XiaoAi integration. Download from [Releases](https://github.com/Time-IU/Eta/releases/tag/v3.4.4-custom.5).
+>
+> ![custom.5 overview in Chinese — feature illustration, not a device screenshot](docs/custom/images/custom5-overview.png)
 >
 > The upstream README below is preserved verbatim; its download links and badges still refer to upstream. This does not claim the custom changes have been submitted upstream.
 <!-- /time-iu-custom-fork-banner -->
