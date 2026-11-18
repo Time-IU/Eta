@@ -27,25 +27,35 @@ class EnhancementSettingsHistoryTest {
     fun historyPreservesDisplayedValuesWithoutWritingBackToTheRemoteSource() {
         val source = context.getSharedPreferences("test_remote_snapshot", Context.MODE_PRIVATE)
         source.edit().clear()
-            .putBoolean(Prefs.Keys.HOTWORD_SELF_HEAL, true)
+            .putBoolean(Prefs.Keys.ASSISTANT_AUTO_CONFIG, true)
             .putString(Prefs.Keys.POWER_KEY_ASSISTANT_TARGET, PowerAssistantTarget.GEMINI.persistedValue)
             .commit()
         val history = EnhancementSettingsHistory(context)
         assertFalse(history.hasConnected)
         history.captureConnected(source)
-        history.recordCommittedBoolean(Prefs.Keys.HOTWORD_SELF_HEAL, false)
+        history.recordCommittedBoolean(Prefs.Keys.ASSISTANT_AUTO_CONFIG, false)
         val restored = EnhancementSettingsHistory(context)
         assertTrue(restored.hasConnected)
-        assertFalse(restored.checked(Prefs.Keys.HOTWORD_SELF_HEAL, true))
+        assertFalse(restored.checked(Prefs.Keys.ASSISTANT_AUTO_CONFIG, true))
         assertEquals(PowerAssistantTarget.GEMINI, restored.powerTarget())
-        assertTrue(source.getBoolean(Prefs.Keys.HOTWORD_SELF_HEAL, false))
+        assertTrue(source.getBoolean(Prefs.Keys.ASSISTANT_AUTO_CONFIG, false))
+    }
+    @Test
+    fun vendorTakeoverSwitchesRemainRemoteAndSurviveDisconnectedUiHistory() {
+        val source = context.getSharedPreferences("vendor_remote_snapshot", Context.MODE_PRIVATE)
+        source.edit().clear()
+            .putBoolean(Prefs.Keys.AGENT_CUSTOM_MODEL, false)
+            .putBoolean(Prefs.Keys.AGENT_REQUIRE_PREFIX, true)
+            .commit()
+        val history = EnhancementSettingsHistory(context)
+        history.captureConnected(source)
+        val restored = EnhancementSettingsHistory(context)
+        assertFalse(restored.checked(Prefs.Keys.AGENT_CUSTOM_MODEL, true))
+        assertTrue(restored.checked(Prefs.Keys.AGENT_REQUIRE_PREFIX, false))
+        assertFalse(Prefs.Keys.AGENT_CUSTOM_MODEL in Prefs.Keys.LOCAL_AGENT_KEYS)
+        assertFalse(Prefs.Keys.AGENT_REQUIRE_PREFIX in Prefs.Keys.LOCAL_AGENT_KEYS)
+        restored.recordCommittedBoolean(Prefs.Keys.AGENT_CUSTOM_MODEL, true)
+        assertFalse(source.getBoolean(Prefs.Keys.AGENT_CUSTOM_MODEL, true))
     }
 
-    @Test
-    fun existingSystemizerEntrySurvivesLossOfCurrentRootAccess() {
-        val history = EnhancementSettingsHistory(context)
-        assertFalse(history.hasUsedSystemizer)
-        history.recordSystemizerUse()
-        assertTrue(EnhancementSettingsHistory(context).hasUsedSystemizer)
-    }
 }

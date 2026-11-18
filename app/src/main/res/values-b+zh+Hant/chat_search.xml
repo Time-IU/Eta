@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="chat_search_open">尋找目前對話</string>
+    <string name="chat_search_placeholder">在目前對話中尋找文字</string>
+    <string name="chat_search_close">關閉尋找</string>
+    <string name="chat_search_searching">正在搜尋已載入的訊息…</string>
+    <string name="chat_search_no_matches">找不到相符內容</string>
+    <string name="chat_search_count">%1$d / %2$d 處相符</string>
+    <string name="chat_search_previous">上一處相符</string>
+    <string name="chat_search_next">下一處相符</string>
+    <string name="chat_search_loaded_scope">訊息本文 · 輸入文字後自動尋找整個對話</string>
+    <string name="chat_search_locate">相符上下文 · 點擊定位原訊息</string>
+    <string name="chat_search_original_marker">此訊息包含目前相符內容 · 確切上下文見上方預覽</string>
+    <string name="chat_search_incomplete">尋找尚未完成</string>
+    <string name="chat_search_no_loaded_matches">已載入部分暫無相符，仍有更早訊息</string>
+    <string name="chat_search_scope_complete">已載入整個對話 · %1$d 則訊息</string>
+    <string name="chat_search_scope_loading">正在載入更早記錄 · 已載入 %1$d 則</string>
+    <string name="chat_search_scope_failed">更早記錄載入失敗 · 已載入 %1$d 則</string>
+    <string name="chat_search_scope_stalled">歷史載入已停止 · 已載入 %1$d 則</string>
+    <string name="chat_search_scope_paused">等待生成或編輯結束後繼續載入 · 已載入 %1$d 則</string>
+    <string name="chat_search_retry">重試載入</string>
+</resources>

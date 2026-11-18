@@ -128,7 +128,9 @@ internal object AgentRuntimeConnection {
         val context = synchronized(lock) { appContext } ?: return failBinding()
         val succeeded = runCatching {
             context.bindService(
-                AgentRuntimeWire.serviceIntent(),
+                if (context.packageName in io.github.mangi.eta.core.ModuleConfig.AGENT_RUNTIME_ENTRY_PACKAGES) {
+                    VendorAssistantBridgeService.serviceIntent()
+                } else AgentRuntimeWire.serviceIntent(),
                 serviceConnection,
                 Context.BIND_AUTO_CREATE or Context.BIND_IMPORTANT or Context.BIND_INCLUDE_CAPABILITIES,
             )

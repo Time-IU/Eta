@@ -55,9 +55,11 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
@@ -66,6 +68,7 @@ import com.itos.coui.dialog.CouiDialogAction
 import com.itos.coui.dialog.CouiDialogPlacement
 import com.itos.coui.dialog.Dialog
 import com.itos.coui.effect.couiButtonFeedback
+import com.itos.coui.menu.CouiMenuDefaults
 import com.itos.coui.menu.CouiMenuItem
 import com.itos.coui.menu.Menu
 import com.itos.coui.menu.couiMenuAnchor
@@ -133,8 +136,61 @@ internal fun AgentTopBarChatHeader(
     val chevronColor = ink.copy(alpha = if (isDark) 0.46f else 0.42f)
     val interactionSource = remember { MutableInteractionSource() }
 
+    val menuItems = remember(state.providerGroups, state.selectedModel?.id) {
+        val multipleGroups = state.providerGroups.size > 1
+        state.providerGroups.flatMapIndexed { groupIndex, group ->
+            group.models.mapIndexed { modelIndex, model ->
+                CouiMenuItem(
+                    value = model.id,
+                    text = if (multipleGroups) "${group.providerName} · ${model.displayName}" else model.displayName,
+                    selected = model.id == state.selectedModel?.id,
+                    dividerBefore = multipleGroups && groupIndex > 0 && modelIndex == 0,
+                )
+            }
+        }
+    }
+    val menuStyle = CouiMenuDefaults.style().let { style ->
+        style.copy(itemTextStyle = modelPickerTextStyle(style.itemTextStyle))
+    }
+    val density = LocalDensity.current
+    val windowWidth = with(density) { LocalWindowInfo.current.containerSize.width.toDp() }
+    val menuWidth = ModelPopupWidth.coerceAtMost((windowWidth - 32.dp).coerceAtLeast(1.dp))
+    val textMeasurer = rememberTextMeasurer()
+    // COUI alpha11 Menu.kt: 40dp rows, 8dp/12dp horizontal insets and 1.5dp/6.5dp
+    // vertical insets. Its slide-selection coordinates also depend on that fixed height.
+    // Measure the exact style/width without a height constraint. Long names or large/fallback
+    // fonts use the existing searchable, wrapping sheet rather than clipping the native menu.
+    val compactRowsFit = !isCoui || state.modelCount > ModelPopupLimit || with(density) {
+        val contentWidth = menuWidth.roundToPx() - 2 * 8.dp.roundToPx() - 2 * 12.dp.roundToPx()
+        val contentHeight = 40.dp.roundToPx() - 2 * 1.5.dp.roundToPx() - 2 * 6.5.dp.roundToPx()
+        menuItems.all { item ->
+            val layout = textMeasurer.measure(
+                text = item.text,
+                style = menuStyle.itemTextStyle,
+                constraints = Constraints(maxWidth = contentWidth.coerceAtLeast(0)),
+            )
+            modelPickerMenuRowFits(
+                measuredWidthPx = layout.size.width,
+                measuredHeightPx = layout.size.height,
+                contentWidthPx = contentWidth,
+                contentHeightPx = contentHeight,
+                hasVisualOverflow = layout.hasVisualOverflow,
+            )
+        }
+    }
+
+    // A font/window change while the native menu is already open must not leave stale,
+    // now-clipped rows on screen. Keep the same model list, but move to the flexible host.
+    LaunchedEffect(compactRowsFit, enabled) {
+        if (enabled && showPopup && !compactRowsFit) {
+            showPopup = false
+            sheetSession += 1
+            showSheet = true
+        }
+    }
+
     val triggerModelPicker: () -> Unit = {
-        if (state.modelCount <= ModelPopupLimit) {
+        if (state.modelCount <= ModelPopupLimit && compactRowsFit) {
             anchor.open { showPopup = true }
         } else {
             sheetSession += 1
@@ -308,20 +364,9 @@ internal fun AgentTopBarChatHeader(
 
         when (uiStyle) {
             AppearanceUiStyle.COUI -> {
-                val menuItems = remember(state.providerGroups, state.selectedModel?.id) {
-                    val multipleGroups = state.providerGroups.size > 1
-                    state.providerGroups.flatMapIndexed { groupIndex, group ->
-                        group.models.mapIndexed { modelIndex, model ->
-                            CouiMenuItem(
-                                value = model.id,
-                                text = if (multipleGroups) "${group.providerName} · ${model.displayName}" else model.displayName,
-                                selected = model.id == state.selectedModel?.id,
-                                dividerBefore = multipleGroups && groupIndex > 0 && modelIndex == 0,
-                            )
-                        }
-                    }
-                }
                 Menu(
+                    modifier = Modifier.width(menuWidth),
+                    style = menuStyle,
                     expanded = showPopup,
                     onDismissRequest = { showPopup = false },
                     items = menuItems,
@@ -363,8 +408,9 @@ internal fun AgentTopBarChatHeader(
                     show = showPopup,
                     alignment = PopupPositionProvider.Align.Start,
                     onDismissRequest = { showPopup = false },
-                    maxHeight = 360.dp,
-                    minWidth = ModelPopupWidth,
+                    // Let the host cap height to its safe window; the scrolling content applies
+                    // the normal 360dp cap. Forcing maxHeight here overrides MIUIX's safe bounds.
+                    minWidth = menuWidth,
                 ) {
                     ModelQuickList(
                         state = state,
@@ -447,6 +493,7 @@ private fun ModelQuickList(
     Column(
         modifier = Modifier
             .width(ModelPopupWidth)
+            .heightIn(max = 360.dp)
             .verticalScroll(rememberScrollState())
             .padding(top = if (showLabels) 0.dp else 6.dp, bottom = 6.dp),
     ) {
@@ -639,10 +686,11 @@ private fun rememberConfirmedSelection(onConfirm: (String) -> Unit): ConfirmedSe
 private fun ModelProviderLabel(name: String, horizontalPadding: Dp = 20.dp) {
     Text(
         text = name,
-        style = MiuixTheme.textStyles.footnote1,
+        style = modelPickerTextStyle(
+            if (LocalUiStyle.current == AppearanceUiStyle.COUI) CouiTheme.typography.label
+            else MiuixTheme.textStyles.footnote1,
+        ),
         color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-        maxLines = 1,
-        overflow = TextOverflow.Ellipsis,
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = horizontalPadding)
@@ -670,10 +718,11 @@ private fun ModelPickerRow(
     ) {
         Text(
             text = model.displayName,
-            style = MiuixTheme.textStyles.body2,
+            style = modelPickerTextStyle(
+                if (LocalUiStyle.current == AppearanceUiStyle.COUI) CouiTheme.typography.menuItem
+                else MiuixTheme.textStyles.body2,
+            ),
             color = contentColor,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(1f),
         )
         if (selected) {

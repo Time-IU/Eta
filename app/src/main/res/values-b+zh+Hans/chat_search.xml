@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="chat_search_open">查找当前会话</string>
+    <string name="chat_search_placeholder">在当前会话中查找文字</string>
+    <string name="chat_search_close">关闭查找</string>
+    <string name="chat_search_searching">正在搜索已加载的消息…</string>
+    <string name="chat_search_no_matches">未找到匹配</string>
+    <string name="chat_search_count">%1$d / %2$d 处匹配</string>
+    <string name="chat_search_previous">上一处匹配</string>
+    <string name="chat_search_next">下一处匹配</string>
+    <string name="chat_search_loaded_scope">消息正文 · 输入文字后自动查找整个会话</string>
+    <string name="chat_search_locate">匹配上下文 · 点击定位原消息</string>
+    <string name="chat_search_original_marker">此消息包含当前匹配 · 具体上下文见上方预览</string>
+    <string name="chat_search_incomplete">查找尚未完成</string>
+    <string name="chat_search_no_loaded_matches">已加载部分暂未找到，仍有更早消息</string>
+    <string name="chat_search_scope_complete">已加载整个会话 · %1$d 条消息</string>
+    <string name="chat_search_scope_loading">正在加载更早记录 · 已加载 %1$d 条</string>
+    <string name="chat_search_scope_failed">更早记录加载失败 · 已加载 %1$d 条</string>
+    <string name="chat_search_scope_stalled">历史加载已停止 · 已加载 %1$d 条</string>
+    <string name="chat_search_scope_paused">等待生成或编辑结束后继续加载 · 已加载 %1$d 条</string>
+    <string name="chat_search_retry">重试加载</string>
+</resources>

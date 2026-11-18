@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="chat_search_open">Find in conversation</string>
+    <string name="chat_search_placeholder">Find text in this conversation</string>
+    <string name="chat_search_close">Close search</string>
+    <string name="chat_search_searching">Searching loaded messages…</string>
+    <string name="chat_search_no_matches">No matches</string>
+    <string name="chat_search_count">%1$d / %2$d matches</string>
+    <string name="chat_search_previous">Previous match</string>
+    <string name="chat_search_next">Next match</string>
+    <string name="chat_search_loaded_scope">Message bodies · enter text to search the entire conversation</string>
+    <string name="chat_search_locate">Match context · tap to locate original message</string>
+    <string name="chat_search_original_marker">Search match in this message · exact context shown above</string>
+    <string name="chat_search_incomplete">Search incomplete</string>
+    <string name="chat_search_no_loaded_matches">No matches yet in loaded history</string>
+    <string name="chat_search_scope_complete">Entire conversation loaded · %1$d messages</string>
+    <string name="chat_search_scope_loading">Loading earlier history · %1$d messages loaded</string>
+    <string name="chat_search_scope_failed">Earlier history failed to load · %1$d messages loaded</string>
+    <string name="chat_search_scope_stalled">History loading stopped · %1$d messages loaded</string>
+    <string name="chat_search_scope_paused">History loading waits for generation/editing to finish · %1$d loaded</string>
+    <string name="chat_search_retry">Retry history</string>
+</resources>

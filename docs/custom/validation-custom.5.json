@@ -1,0 +1,36 @@
+{
+  "upstream_run": 44107280271,
+  "upstream_commit": "0b70953453b173405a4d9dcfad54be78cf3aec70",
+  "custom_baseline": "cb233ef5fd755a5ec0dd3ed2852926a5034d216a",
+  "version_name": "3.4.4-debug+custom.5-chat-search",
+  "regression": {
+    "tests": 388,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "excluded_environment_suites": {
+    "SystemVoicePolicyTest": "Existing SDK28 fixture below minSdk33; excluded by inherited local init",
+    "CustomMessageSaveControllerTest": "Existing SDK36 Robolectric native runtime unavailable on Linux aarch64",
+    "SpeechDictationGestureTest": "5 setup failures: SDK36 Robolectric native runtime unavailable on Linux aarch64",
+    "MarkdownMathTest": "10 setup failures: SDK36 Robolectric native runtime unavailable on Linux aarch64",
+    "ConversationBranchBoundaryTest": "8 setup failures: SDK36 Robolectric native runtime unavailable on Linux aarch64"
+  },
+  "art_strict_verification_exit_code": 0,
+  "art_job": "job_25f547c9",
+  "gradle_final_job": "job_252ffe04",
+  "build_input_files_verified_unchanged": 3898,
+  "independent_review": "No remaining critical/important findings; cancellation P1 fixed and re-reviewed",
+  "installed": false,
+  "github_pushed": false,
+  "models_deleted": false,
+  "app_uid_binder_ui_acceptance": false,
+  "xiaomi_device_acceptance": false,
+  "non_signature_payload_identical": true,
+  "entries_compared": 478,
+  "signed_apk_sha256": "7ce58fee5a648007d028dc9b76b05f8847f6dce30ada86fdedc6ce396ca7d59b",
+  "signed_apk_bytes": 54547903,
+  "unsigned_apk_sha256": "1a4993a7eace8b2ef146adc89efba7d448be3d7429b9208186f274ac4f7064ea",
+  "signature_certificate_sha256": "a40da80a59d170caa950cf15c18c454d47a39b26989d8b640ecd745ba71bf5dc",
+  "final_rebuild_unsigned_identical": true
+}

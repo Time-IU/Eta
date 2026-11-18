@@ -1,0 +1,27 @@
+<resources>
+<string name="ui_only_take_over_with_agent_prefix_d17556">Only take over with /agent prefix</string>
+  <string name="ui_enable_vendor_assistant_custom_models_c8e465">Enable vendor assistant custom models</string>
+  <string name="ui_xiaobu_xiaoai_compatible_entrance_ae918a">Xiaobu/Xiaoai compatible entrance</string>
+  <string name="injected_reasoning">Eta is reasoning…</string>
+  <string name="injected_executing">Eta is working…</string>
+  <string name="injected_completed">Eta completed this task</string>
+  <string name="injected_failed">Eta could not complete the task. Try again later</string>
+  <string name="injected_breeno_custom_model_disabled">Enable Breeno custom models in Eta settings first</string>
+  <string name="injected_breeno_context_unavailable">Breeno context is unavailable</string>
+  <string name="injected_runtime_failed">Agent Runtime failed</string>
+  <string name="injected_breeno_failed">Breeno custom model failed: %1$s</string>
+  <string name="injected_using_tool">Using %1$s</string>
+  <string name="injected_tool">tool</string>
+  <string name="injected_system_tool">system tool</string>
+  <string name="injected_app_tool">app tool</string>
+  <string name="injected_screen_tool">screen tool</string>
+  <string name="injected_reasoning_label">Reasoning</string>
+  <string name="injected_image_data_limit">Image data exceeds the safe limit. Resize the image and try again</string>
+  <string name="injected_image_count_limit">You can attach up to %1$d images at a time. Remove some images and try again</string>
+  <string name="injected_image_input_limit">The image input is too complex. Remove some images or simplify the image data</string>
+  <string name="injected_image_cache_limit">Image reference data is too large to cache safely. Choose the images again or use remote image links</string>
+  <string name="injected_image_unreadable">Some images could not be read. Choose the images again and retry</string>
+  <string name="capability_hook_assistants">Xiaobu and Super XiaoAi integration</string>
+    <string name="capability_hook_assistants_summary">Invoke Eta Runtime through system assistant entry points. Requires Eta enabled in LSPosed, the corresponding assistant scope, and supported ColorOS or HyperOS.</string>
+
+</resources>

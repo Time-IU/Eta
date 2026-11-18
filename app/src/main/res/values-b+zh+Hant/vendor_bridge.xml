@@ -1,0 +1,27 @@
+<resources>
+<string name="ui_only_take_over_with_agent_prefix_d17556">僅以 /agent 前綴接管</string>
+  <string name="ui_enable_vendor_assistant_custom_models_c8e465">啟用廠商助手自訂模型</string>
+  <string name="ui_xiaobu_xiaoai_compatible_entrance_ae918a">小布／小愛相容入口</string>
+  <string name="injected_reasoning">Eta 正在思考…</string>
+  <string name="injected_executing">Eta 正在執行任務…</string>
+  <string name="injected_completed">Eta 已完成本次任務</string>
+  <string name="injected_failed">Eta 處理失敗，請稍後再試</string>
+  <string name="injected_breeno_custom_model_disabled">請先在 Eta 設定中啟用「小布自訂模型」</string>
+  <string name="injected_breeno_context_unavailable">無法取得小布程序的 Context</string>
+  <string name="injected_runtime_failed">Agent Runtime 執行失敗</string>
+  <string name="injected_breeno_failed">小布自訂模型呼叫失敗：%1$s</string>
+  <string name="injected_using_tool">正在使用%1$s</string>
+  <string name="injected_tool">工具</string>
+  <string name="injected_system_tool">系統工具</string>
+  <string name="injected_app_tool">應用程式工具</string>
+  <string name="injected_screen_tool">畫面工具</string>
+  <string name="injected_reasoning_label">思考</string>
+  <string name="injected_image_data_limit">圖片輸入資料超過安全上限，請縮小圖片後再試</string>
+  <string name="injected_image_count_limit">一次最多支援 %1$d 張圖片，請減少圖片數量後再試</string>
+  <string name="injected_image_input_limit">圖片輸入結構超過安全上限，請減少圖片數量或簡化圖片資料後再試</string>
+  <string name="injected_image_cache_limit">圖片參照資料過大，無法安全暫存，請重新選擇圖片或使用遠端圖片連結</string>
+  <string name="injected_image_unreadable">無法讀取要求中的所有圖片，請重新選擇圖片後再試</string>
+  <string name="capability_hook_assistants">小布與超級小愛接管</string>
+    <string name="capability_hook_assistants_summary">透過系統助理入口呼叫 Eta Runtime。需要 LSPosed 啟用 Eta、對應助理作用範圍，以及支援的 ColorOS 或 HyperOS。</string>
+
+</resources>
