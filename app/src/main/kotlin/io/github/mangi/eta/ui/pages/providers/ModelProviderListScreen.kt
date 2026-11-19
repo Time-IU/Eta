@@ -128,7 +128,7 @@ internal fun ModelProviderListScreen(
                     CouiIconDivider()
                     CouiPreference(
                         title = "新增 Gemini",
-                        summary = "使用 API Key 连接原生 Interactions API",
+                        summary = "支持 Google AI Studio 与 Vertex AI",
                         icon = { ProviderBrandIcon(ProviderSourceTypes.GEMINI) },
                         onClick = { onNavigate(AppRoute.ModelProviderNew(NewProviderType.Gemini)) },
                     )
@@ -244,7 +244,7 @@ internal fun ModelProviderListScreen(
                         )
                         ArrowPreference(
                             title = "新增 Gemini",
-                            summary = "使用 API Key 连接原生 Interactions API",
+                            summary = "支持 Google AI Studio 与 Vertex AI",
                             startAction = { ProviderBrandIcon(ProviderSourceTypes.GEMINI) },
                             onClick = { onNavigate(AppRoute.ModelProviderNew(NewProviderType.Gemini)) },
                         )

@@ -22,7 +22,7 @@ import org.robolectric.annotation.Config
 @Config(sdk = [36])
 class EtaDatabaseMigrationTest {
     @Test
-    fun migration6To28PreservesDataAndMovesCompleteConversationContext() {
+    fun migration6To29PreservesDataAndMovesCompleteConversationContext() {
         val context = RuntimeEnvironment.getApplication() as Context
         val databaseName = "migration-${UUID.randomUUID()}.db"
         createVersion6Database(context, databaseName)
@@ -62,6 +62,7 @@ class EtaDatabaseMigrationTest {
                 EtaDatabase.MIGRATION_25_26,
                 EtaDatabase.MIGRATION_26_27,
                 EtaDatabase.MIGRATION_27_28,
+                EtaDatabase.MIGRATION_28_29,
             )
             .build()
         try {
@@ -309,7 +310,7 @@ class EtaDatabaseMigrationTest {
             }).build()
         FrameworkSQLiteOpenHelperFactory().create(configuration).use { it.writableDatabase }
         val database = Room.databaseBuilder(context, EtaDatabase::class.java, databaseName)
-            .addMigrations(*(historicalMigrations() + EtaDatabase.MIGRATION_27_28).toTypedArray())
+            .addMigrations(*(historicalMigrations() + listOf(EtaDatabase.MIGRATION_27_28, EtaDatabase.MIGRATION_28_29)).toTypedArray())
             .build()
         try {
             runBlocking(Dispatchers.IO) {
@@ -385,7 +386,7 @@ class EtaDatabaseMigrationTest {
             }).build()
         FrameworkSQLiteOpenHelperFactory().create(configuration).use { it.writableDatabase }
         val database = Room.databaseBuilder(context, EtaDatabase::class.java, databaseName)
-            .addMigrations(*(historicalMigrations() + EtaDatabase.MIGRATION_27_28).toTypedArray()).build()
+            .addMigrations(*(historicalMigrations() + listOf(EtaDatabase.MIGRATION_27_28, EtaDatabase.MIGRATION_28_29)).toTypedArray()).build()
         try {
             org.junit.Assert.assertThrows(RuntimeException::class.java) { database.openHelper.writableDatabase }
         } finally { database.close() }
