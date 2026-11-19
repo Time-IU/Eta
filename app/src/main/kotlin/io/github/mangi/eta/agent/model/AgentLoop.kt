@@ -63,6 +63,7 @@ internal class AgentLoop(
     private val sensitiveToolCallIds = linkedSetOf<String>()
     private val toolBatchLock = Any()
     private var pendingToolImageMessage: JSONObject? = null
+    private var pendingToolResultImages = emptyMap<String, List<AgentModelClient.ModelImage>>()
     private val turnMetrics = TurnMetricsAccumulator()
     private var precedingTools: JSONArray? = null
     // All retry attempts and both compaction request paths share the same boundary.
@@ -146,7 +147,7 @@ internal class AgentLoop(
             val completedRound = try {
                 modelRetry.complete(
                     initialRound = round,
-                    initialRequest = ProviderRequest(config, requestMessages, roundTools, sessionId, purpose),
+                    initialRequest = ProviderRequest(config, requestMessages, roundTools, sessionId, purpose, pendingToolResultImages),
                     provider = memoryBoundProvider,
                     controller = runController,
                     onEvent = { event ->
@@ -202,7 +203,7 @@ internal class AgentLoop(
                 }
             } finally {
                 // 同一回合的重试仍需原始观察；整个回合结束后才移除截图。
-                discardPendingToolImageMessage()
+                clearPendingToolImages()
             }
             val completedAtMs = monotonicNowMs()
             val stepLlmMs = (completedAtMs - stepStartedAtMs).coerceAtLeast(0L)
@@ -622,16 +623,15 @@ internal class AgentLoop(
         }
 
         // 工具截图是瞬时观察，不是会话资产。下一次思考消费后立即删除。
-        discardPendingToolImageMessage()
-        val images = imageOutcomes.flatMap { outcome -> outcome.result.images }
-        val toolNames = imageOutcomes
-            .map { outcome -> outcome.call.name }
-            .distinct()
-            .joinToString(", ")
-        pendingToolImageMessage = AgentConversationCodec.userMessage(
-            text = "Latest observation image(s) returned by tool(s): $toolNames.",
-            images = images,
-        ).put("_eta_observation", true).also(messages::put)
+        if (provider.capabilities.toolResultImages) {
+            pendingToolResultImages = imageOutcomes.associate { it.call.id to it.result.images }
+        } else {
+            val toolNames = imageOutcomes.map { it.call.name }.distinct().joinToString(", ")
+            pendingToolImageMessage = AgentConversationCodec.userMessage(
+                text = "Latest observation image(s) returned by tool(s): $toolNames.",
+                images = imageOutcomes.flatMap { it.result.images },
+            ).put("_eta_observation", true).also(messages::put)
+        }
 
         imageOutcomes.forEach { outcome ->
             onEvent(
@@ -645,7 +645,8 @@ internal class AgentLoop(
         }
     }
 
-    private fun discardPendingToolImageMessage() {
+    private fun clearPendingToolImages() {
+        pendingToolResultImages = emptyMap()
         val pending = pendingToolImageMessage ?: return
         pendingToolImageMessage = null
         for (index in messages.length() - 1 downTo 0) {

@@ -549,6 +549,7 @@ internal fun ProviderModelsTab(
     editingModel?.let { model ->
         ModelEditDialog(
             nativeGemini = provider is GeminiProviderSetting,
+            vertexGemini = (provider as? GeminiProviderSetting)?.isVertexAi == true,
             model = model,
             isNew = isCreatingModel,
             isSaving = isMutatingModel,
@@ -923,6 +924,7 @@ private fun ModelListItem(
 @Composable
 private fun ModelEditDialog(
     nativeGemini: Boolean,
+    vertexGemini: Boolean,
     model: Model,
     isNew: Boolean,
     isSaving: Boolean,
@@ -939,11 +941,18 @@ private fun ModelEditDialog(
             io.github.mangi.eta.data.model.ModelReasoningInference.infer(model.modelId)
         } else null
     }
-    val initialCapabilities = if (nativeGemini) GeminiModelCapabilities.resolveReasoning(model)
-        else model.effectiveReasoningCapabilities ?: inferredCapabilities
-    val availableEfforts = if (nativeGemini) GeminiModelCapabilities.configurableEfforts else editableReasoningEfforts
+    val initialCapabilities = when {
+        vertexGemini -> GeminiModelCapabilities.resolveVertexReasoning(model)
+        nativeGemini -> GeminiModelCapabilities.resolveReasoning(model)
+        else -> model.effectiveReasoningCapabilities ?: inferredCapabilities
+    }
     var displayName by remember(model.id, isNew) { mutableStateOf(model.displayName) }
     var modelId by remember(model.id, isNew) { mutableStateOf(model.modelId) }
+    val availableEfforts = when {
+        vertexGemini -> GeminiModelCapabilities.requestReasoningCapabilities(modelId).supportedEfforts
+        nativeGemini -> GeminiModelCapabilities.configurableEfforts
+        else -> editableReasoningEfforts
+    }
     var contextWindowOverrideText by remember(model.id, isNew) {
         // 早先拉取、未写入窗口的模型也带着远端标注，打开编辑时直接预填。
         mutableStateOf((model.contextWindowOverride ?: model.contextWindow)?.toString().orEmpty())
@@ -1009,9 +1018,13 @@ private fun ModelEditDialog(
 
     val dialogTitle = if (isNew) context.getString(R.string.page_add_model_532a64) else context.getString(R.string.page_edit_model_29e31e)
     val confirmText = if (isSaving) context.getString(R.string.page_saving_d70d42) else context.getString(R.string.page_save_fadf24)
+    val modelIdError = if (vertexGemini && modelId.isNotBlank() && !GeminiModelCapabilities.isGemini4(modelId)) {
+        "Vertex AI 对话仅支持 Gemini 4 系列模型。"
+    } else null
     val confirmEnabled = !isSaving &&
         displayName.isNotBlank() &&
         modelId.isNotBlank() &&
+        modelIdError == null &&
         contextError == null
     val contextValue = contextWindowOverrideText.toIntOrNull()
     val thinkingTitle = if (nativeGemini) "配置思考档位" else stringResource(R.string.ui_support_thinking_5b9e4c)
@@ -1022,6 +1035,11 @@ private fun ModelEditDialog(
     } else {
         stringResource(if (model.reasoning == true) R.string.provider_auto_reasoning_detected
             else R.string.provider_auto_reasoning_unknown)
+    }
+    val effortHelp = when {
+        vertexGemini -> "档位按 Gemini 4 模型提供，Default 始终可用。"
+        nativeGemini -> "可手动选择档位，是否支持由服务端校验。Default 始终可用。"
+        else -> stringResource(R.string.ui_only_check_the_ranges_actually_supported_by_the_mode_2c343d)
     }
 
     when (LocalUiStyle.current) {
@@ -1163,15 +1181,14 @@ private fun ModelEditDialog(
                                 }
                             }
                             CouiText(
-                                text = if (nativeGemini) "可手动选择档位，是否支持由服务端校验。Default 始终可用。"
-                                else stringResource(R.string.ui_only_check_the_ranges_actually_supported_by_the_mode_2c343d),
+                                text = effortHelp,
                                 kind = CouiTextKind.GroupFooter,
                                 color = colors.summary,
                             )
                         }
                     }
 
-                    error?.let { message ->
+                    (modelIdError ?: error)?.let { message ->
                         CouiText(
                             text = message,
                             kind = CouiTextKind.GroupFooter,
@@ -1350,13 +1367,12 @@ private fun ModelEditDialog(
                             }
                         }
                         Text(
-                            text = if (nativeGemini) "可手动选择档位，是否支持由服务端校验。Default 始终可用。"
-                            else stringResource(R.string.ui_only_check_the_ranges_actually_supported_by_the_mode_2c343d),
+                            text = effortHelp,
                             style = MiuixTheme.textStyles.footnote2,
                             color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
                             modifier = Modifier.padding(start = 4.dp, top = 8.dp),
                         )
-                        error?.let { message ->
+                        (modelIdError ?: error)?.let { message ->
                             Text(
                                 text = message,
                                 style = MiuixTheme.textStyles.footnote2,
