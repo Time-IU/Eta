@@ -6,6 +6,7 @@ import io.github.mangi.eta.data.model.Model
 import io.github.mangi.eta.data.model.ProviderAuthModes
 import io.github.mangi.eta.data.model.ProviderSetting
 import io.github.mangi.eta.data.provider.ProviderSourceRegistry
+import io.github.mangi.eta.data.provider.isLocalEndpoint
 import java.text.NumberFormat
 import java.util.Locale
 
@@ -14,7 +15,25 @@ internal data class AgentModelPickerUiState(
     val providerGroups: List<AgentModelProviderGroupUi> = emptyList(),
     val selectedModel: AgentModelOptionUi? = null,
     val isChanging: Boolean = false,
-)
+    /**
+     * 是否已经真正投影过一次（providers 从数据库读出来的结果）。
+     *
+     * 初值是空 state，冷启动时 provider 表还没读出来，此时「没有模型」和「还没加载完」
+     * 长得一模一样。不加这个标志，首帧会闪一条「还没有可用的模型」，DB 慢时能闪一秒。
+     */
+    val loaded: Boolean = false,
+) {
+    /**
+     * 当前能不能真的把消息发出去。
+     *
+     * [selectedModel] 只说明「选了一个模型」，不保证它背后的 provider 填了 Key——
+     * 投影时 selectedModel 会在所有 enabled provider 里按 id 兜底查找；
+     * 只有 [providerGroups] 过滤掉了「Key 为空 / 未授权」的 provider。
+     * 两者同时成立才算可用，缺一都会在发送时失败。
+     */
+    val hasUsableModel: Boolean
+        get() = loaded && selectedModel != null && providerGroups.any { group -> group.models.any { it.id == selectedModel.id } }
+}
 
 @Immutable
 internal data class AgentModelProviderGroupUi(
@@ -91,9 +110,28 @@ internal data class AgentContextUsageUi(
     val contextTokens: Int?,
     val contextWindow: Int?,
     val sessionStats: SessionStatsSummaryUi = SessionStatsSummaryUi(),
+    /** 最近一次响应的平均输出速度（tok/s）；没有数据时为 null。 */
+    val averageTokensPerSecond: Double? = null,
+    /** 最近可用的非空回答用量记录，可为运行内多请求累计；独立于上下文快照及压缩边界。 */
+    val latestUsage: TokenUsageUi? = null,
+    /** 上下文构成估算：系统提示词 / 工具定义 / 对话消息（元信息不是实测值）。 */
+    val systemPromptTokens: Int? = null,
+    val toolDefinitionTokens: Int? = null,
+    val conversationTokens: Int? = null,
 ) {
     val progress: Float?
         get() = contextUsageProgress(contextTokens, contextWindow)
+
+    /** 头部显示的整数百分比；没有上下文窗口或用量时为 null。 */
+    val usedPercent: Int?
+        get() = progress?.let { kotlin.math.round(it * 100.0).toInt() }
+
+    /** 三段构成合计；任一为空按 0 计，全空时为 null（面板不画分段条）。 */
+    val compositionTotal: Int?
+        get() {
+            val parts = listOfNotNull(systemPromptTokens, toolDefinitionTokens, conversationTokens)
+            return if (parts.isEmpty()) null else parts.sum()
+        }
 }
 
 internal object AgentModelPickerProjector {
@@ -101,11 +139,17 @@ internal object AgentModelPickerProjector {
         providers: List<ProviderSetting>,
         selectedProviderId: String?,
         selectedModelId: String?,
+        /** 借用厂商助手（小布）是否参与模型列表；由设置里的开关决定。 */
+        borrowVendorEnabled: Boolean = false,
     ): AgentModelPickerUiState {
         val enabledProviders = providers
             .asSequence()
             .filter(ProviderSetting::isEnabled)
-            .filter { it.authMode == ProviderAuthModes.API_KEY || ProviderAuthModes.isOAuth(it.authMode) }
+            .filter {
+                it.authMode == ProviderAuthModes.API_KEY ||
+                    ProviderAuthModes.isOAuth(it.authMode) ||
+                    (borrowVendorEnabled && ProviderAuthModes.isBorrowedVendor(it.authMode))
+            }
             .sortedBy(ProviderSetting::sortOrder)
             .toList()
         val selectedProvider = enabledProviders.firstOrNull { it.id == selectedProviderId }
@@ -123,8 +167,11 @@ internal object AgentModelPickerProjector {
         val groups = enabledProviders
             .asSequence()
             .filter {
+                // 本地/局域网服务不校验 Key，也必须进面板；否则「本地地址代理」永远选不到。
                 ProviderAuthModes.isOAuth(it.authMode) ||
-                    (it.authMode == ProviderAuthModes.API_KEY && it.apiKey.isNotBlank())
+                    ProviderAuthModes.isBorrowedVendor(it.authMode) ||
+                    (it.authMode == ProviderAuthModes.API_KEY &&
+                        (it.apiKey.isNotBlank() || it.baseUrl.isLocalEndpoint()))
             }
             .mapNotNull { provider ->
                 val sourceType = ProviderSourceRegistry.resolve(provider)
@@ -147,6 +194,7 @@ internal object AgentModelPickerProjector {
         return AgentModelPickerUiState(
             providerGroups = groups,
             selectedModel = selectedModel,
+            loaded = true,
         )
     }
 
@@ -181,19 +229,41 @@ internal fun latestContextUsage(
     messages: List<AgentChatMessageUi>,
     selectedModel: AgentModelOptionUi?,
 ): AgentContextUsageUi {
-    val sessionStats = deriveSessionStatsSummary(messages)
+    // These have different lifetimes: a partial newer run must not inherit the older
+    // run's request metrics, while its missing context can still use an older snapshot.
+    var latestUsage: TokenUsageUi? = null
+    var contextSnapshot: TokenUsageUi? = null
+    var contextResolved = false
     for (message in messages.asReversed()) {
         when (message) {
-            is AgentMessageUi -> message.usage?.contextTokens?.let {
-                return AgentContextUsageUi(it, selectedModel?.contextWindow, sessionStats)
+            is AgentMessageUi -> {
+                val recorded = message.usage
+                if (latestUsage == null && recorded != null && !recorded.isEmpty) {
+                    latestUsage = recorded
+                }
+                if (!contextResolved && recorded?.contextTokens != null) {
+                    contextSnapshot = recorded
+                    contextResolved = true
+                }
             }
-            is SystemNoticeMessageUi -> if (message.code == SystemNoticeCode.ContextCompaction) {
-                return AgentContextUsageUi(null, selectedModel?.contextWindow, sessionStats)
+            is SystemNoticeMessageUi -> if (!contextResolved &&
+                message.code == SystemNoticeCode.ContextCompaction) {
+                // Preserve the existing snapshot invalidation boundary, not a latest-run boundary.
+                contextResolved = true
             }
             else -> Unit
         }
+        if (contextResolved && latestUsage != null) break
     }
-    return AgentContextUsageUi(null, selectedModel?.contextWindow, sessionStats)
+    return AgentContextUsageUi(
+        contextTokens = contextSnapshot?.contextTokens,
+        contextWindow = selectedModel?.contextWindow,
+        sessionStats = deriveSessionStatsSummary(messages),
+        latestUsage = latestUsage,
+        systemPromptTokens = contextSnapshot?.systemPromptTokens,
+        toolDefinitionTokens = contextSnapshot?.toolDefinitionTokens,
+        conversationTokens = contextSnapshot?.conversationTokens,
+    )
 }
 
 internal fun deriveSessionStatsSummary(messages: List<AgentChatMessageUi>): SessionStatsSummaryUi {

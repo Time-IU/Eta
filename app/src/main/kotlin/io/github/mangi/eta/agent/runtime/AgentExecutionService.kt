@@ -102,8 +102,13 @@ internal class AgentExecutionService : Service() {
 
     private fun notification(): Notification {
         val status = runStatus
+        // 正在装 Linux 工具时，点击通知直接落到 Linux 工具环境页，而不是停在首页。
+        val openIntent = Intent(this, MainActivity::class.java)
+        if (io.github.mangi.eta.agent.terminal.LinuxInstallRunner.busy) {
+            openIntent.action = MainActivity.ACTION_OPEN_LINUX_ENVIRONMENT
+        }
         val open = PendingIntent.getActivity(
-            this, 0, Intent(this, MainActivity::class.java),
+            this, if (openIntent.action == null) 0 else 2, openIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
         val stop = PendingIntent.getService(
@@ -122,14 +127,13 @@ internal class AgentExecutionService : Service() {
             .setOnlyAlertOnce(true)
             .addAction(Notification.Action.Builder(null, getString(R.string.execution_stop), stop).build())
         // 只有 Agent run 在跑时才申请提升为 Live Update；终端会话、Linux 启动等长驻任务不属于"正在进行、需要持续关注"的活动。
-        if (status != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.BAKLAVA) {
+        if (status != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.BAKLAVA && FluidNotificationPolicy.allowsFluid()) {
             // 不使用无进度的 ProgressStyle，避免 Live Update 卡片渲染出空进度白条；改用 BigTextStyle 并附上桌面同款图标作为视觉锚点。
             builder
                 .setStyle(Notification.BigTextStyle().bigText(contentText))
                 .setShortCriticalText(status.shortText())
             launcherLargeIcon()?.let(builder::setLargeIcon)
-            // 请求方法从 API 36.1 才公开；标准 extra 也可供支持该协议的 API 36 系统读取。
-            builder.extras.putBoolean("android.requestPromotedOngoing", true)
+            LiveUpdateContract.request(builder, status.shortText(), true)
         }
         return builder.build()
     }

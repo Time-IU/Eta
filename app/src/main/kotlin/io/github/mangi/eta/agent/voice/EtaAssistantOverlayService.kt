@@ -1,12 +1,14 @@
 package io.github.mangi.eta.agent.voice
 
 import io.github.mangi.eta.data.model.TtsProvider
+import io.github.mangi.eta.data.model.AsrProvider
 import io.github.mangi.eta.data.model.SpeechSettings
 import io.github.mangi.eta.data.repository.SpeechSettingsRepository
 import io.github.mangi.eta.ui.voice.openSpeechSettings
 import io.github.mangi.eta.ui.voice.SpeechPlaybackErrors
 import io.github.mangi.eta.ui.voice.LocalSpeechPlayback
 import io.github.mangi.eta.ui.voice.LocalSpeechPlaybackEnabled
+import io.github.mangi.eta.ui.voice.LocalSpeechPlaybackProgress
 import android.os.PowerManager
 import android.Manifest
 import android.app.ActivityOptions
@@ -35,6 +37,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.ComposeView
@@ -112,7 +115,8 @@ internal class EtaAssistantOverlayService : Service(), LifecycleOwner, SavedStat
             context = this,
             scope = scope,
             automaticEndpoint = true,
-            beforeCapture = speechForeground::recording,
+            /** 系统识别由外部识别服务录音，本进程不申请 microphone 前台类型。 */
+            beforeCapture = { if (speechSettings?.asr != AsrProvider.SYSTEM) speechForeground.recording() },
             afterCapture = speechForeground::stop,
             onResult = { text ->
                 speechState = EtaSpeechState()
@@ -352,9 +356,13 @@ internal class EtaAssistantOverlayService : Service(), LifecycleOwner, SavedStat
             ) {
                 // ColorOS 在 Overlay 窗口切换期间可能短暂使用软件画布；RuntimeShader
                 // 无法在该画布绘制，因此浮窗统一使用 Miuix 的圆角回退路径。
+                val speechSettings by remember { SpeechSettingsRepository.settingsFlow() }
+                    .collectAsState(initial = null)
+                val playbackState = playback.state.collectAsState()
                 CompositionLocalProvider(LocalSquircleEnabled provides false,
                     LocalSpeechPlayback provides playback,
-                    LocalSpeechPlaybackEnabled provides (speechSettings?.let { it.tts != TtsProvider.NONE } == true)) {
+                    LocalSpeechPlaybackEnabled provides (speechSettings?.let { it.tts != TtsProvider.NONE } == true),
+                    LocalSpeechPlaybackProgress provides playbackState) {
                     SpeechPlaybackErrors(playback)
                     EtaVoicePanel(
                         state = uiState,
@@ -483,6 +491,8 @@ internal class EtaAssistantOverlayService : Service(), LifecycleOwner, SavedStat
 
     private fun showKeyboard() {
         entryInputPending = false
+        // Current UI state models messages + phase; input prompting lives in the composer hint.
+        // Keep existing speech feedback (for example microphone permission) and the user's draft.
         uiState = uiState.copy(phase = EtaVoicePhase.READY)
         updateSoftInput(visible = true)
         inputFocusRequestKey++
@@ -565,8 +575,8 @@ internal class EtaAssistantOverlayService : Service(), LifecycleOwner, SavedStat
                         messages = finishRunMessages(runId, result),
                     )
                 }
+                // 熄屏不再拦掉自动播报：配合"熄屏继续朗读"，耳机里也能听完这一轮回答。
                 if (!hiddenForForegroundOperation && windowView?.isShown == true && result.ok &&
-                    getSystemService(PowerManager::class.java).isInteractive &&
                     speechConfig?.autoSpeak == true && speechConfig.tts != TtsProvider.NONE) {
                     val messageId = uiState.messages.filterIsInstance<AgentMessageUi>().lastOrNull()?.id ?: runId
                     playback.speak(messageId, result.content, settings = speechConfig)

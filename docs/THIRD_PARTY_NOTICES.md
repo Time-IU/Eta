@@ -1,3 +1,5 @@
+> **未发布的集成工作区：不是已验收版本。** 本次把 `58a1faec` 的增量与 Time-IU 非官方定制基线 `17a73fdb` 整合；下面的原基线说明不是本次合并的测试结果。所有既有定制功能、语言、非官方归属及构建/许可说明继续保留；新增能力仅为待验证目标，不代表构建、设备端或视觉验收通过。远端采用 PolyForm Noncommercial 1.0.0，与当前 GPL-3.0 基线不同；尚未确认合并及再分发条件，本次不发布、不替换 LICENSE，也不作许可兼容结论。
+
 # 第三方声明
 
 ## 终端原生组件
@@ -149,3 +151,51 @@ Eta 不把下列工具打包进 APK。用户在 Linux 工具环境页面主动�
 JADX 的发行包许可证会随所需 CLI 文件一并保留；Apktool、smali 与 baksmali 的许可证和第三方声明保留在各自 JAR 制品中。Eta 仅提供经过校验的安装、命令入口和能力边界，不对这些工具重新授权。
 
 GitHub 的实际制品域名不可达或较慢时，安装器可能通过 `gh-proxy.com` 请求同一个公开 Release URL；Node.js 制品可能先通过 `cdn.npmmirror.com` 请求。下载入口会获知用户的网络地址及所请求的公开制品；Eta 不向其发送账号、Cookie、API Key 或其他 Eta 数据，并在落盘前继续校验内置的官方制品大小与 SHA-256。不希望使用下载入口的用户可以不安装对应可选档案。
+
+## 远端增量参考（58a1faec，未验收）
+
+以下按完整 Markdown 段落、表格及代码块补入尚未出现在本地正文中的远端描述。它们是待核对的设计与集成目标，不是当前集成已工作的证明；与上方本地约定冲突时不得据此删减本地功能，也不自动采用远端默认值或界面重设计。相关代码、设备权限及双界面行为需后续验证。
+
+### 终端原生组件
+
+APK 的 `assets/native-sources` 附带校验过的原始源码，以及从实际构建入口自动生成的脚本、PTY 源码和补丁包；`assets/licenses` 附带许可证全文。构建脚本与说明位于 [终端原生组件](TERMINAL_NATIVE.md)。这些独立第三方程序保持其开源许可权利，保留其自身许可权利；本集成尚未判断主项目许可兼容性。
+
+### Miuix
+
+Eta 的应用界面使用 [Miuix](https://github.com/compose-miuix-ui/miuix)，其采用 [Apache License 2.0](https://github.com/compose-miuix-ui/miuix/blob/main/LICENSE)。
+
+### DexKit
+
+DexKit 的 JVM 接口等非 `Core/` 代码采用 [Apache License 2.0](https://github.com/LuckyPray/DexKit/blob/2.2.0/LICENSE)，`Core/` 原生解析代码采用 [GNU LGPL v3](https://github.com/LuckyPray/DexKit/blob/2.2.0/Core/LICENSE)。Eta 通过官方 AAR 使用其独立原生动态库；上游源码、构建配置与版权声明可在 [官方源码](https://github.com/LuckyPray/DexKit/tree/2.2.0) 获取。这些第三方组件保留原有许可证权利，保留其自身许可权利；本集成尚未判断主项目许可兼容性。
+
+### Kimi Code 图标
+
+首页“启动 Kimi Web”入口的 `ic_kimi_code.xml` 转换自 Moonshot AI
+[Kimi Code](https://github.com/MoonshotAI/kimi-code/blob/d1ca65e1de189617e9edbc54010e62d472a1de3d/apps/vscode/resources/kimi-icon.svg)
+的单色侧栏图标。转换仅适配 Android VectorDrawable 格式，保留原始几何与比例。
+
+Kimi Code 使用 MIT License：
+
+```text
+MIT License
+
+Copyright (c) 2026 Moonshot AI
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```

@@ -12,6 +12,8 @@ import android.os.Handler
 import android.os.Looper
 import android.view.Gravity
 import android.view.View
+import android.view.ViewGroup
+import android.widget.FrameLayout
 import android.view.WindowManager
 import android.view.animation.DecelerateInterpolator
 import android.view.animation.OvershootInterpolator
@@ -146,6 +148,44 @@ object GestureIndicator {
     private const val MAX_LONG_PRESS_HOLD_MS = 620L
 }
 
+/** Same indicator artwork, contained in the virtual-screen viewer rather than a system overlay. */
+internal class GestureIndicatorHost(context: Context) : FrameLayout(context) {
+    private var active: AnimatedIndicatorView? = null
+
+    fun showPress(x: Float, y: Float, longPress: Boolean, durationMs: Int) {
+        val view = PressIndicatorView(context, if (longPress) PressKind.LONG_PRESS else PressKind.TAP,
+            if (longPress) (durationMs.toLong() - 380).coerceIn(240, 620) else 100)
+        val size = (40 * resources.displayMetrics.density).toInt()
+        attach(view, LayoutParams(size, size).apply {
+            leftMargin = x.toInt() - size / 2
+            topMargin = y.toInt() - size / 2
+        })
+    }
+
+    fun showSwipe(x1: Float, y1: Float, x2: Float, y2: Float, durationMs: Int) {
+        attach(SwipeIndicatorView(context, x1, y1, x2, y2, durationMs),
+            LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+    }
+
+    private fun attach(view: AnimatedIndicatorView, params: LayoutParams) {
+        clear()
+        active = view
+        addView(view, params)
+        view.startIndicatorAnimation { if (active === view) clear() }
+    }
+
+    private fun clear() {
+        active?.cancelIndicatorAnimation()
+        active = null
+        removeAllViews()
+    }
+
+    override fun onDetachedFromWindow() {
+        clear()
+        super.onDetachedFromWindow()
+    }
+}
+
 private enum class PressKind { TAP, LONG_PRESS }
 
 private abstract class AnimatedIndicatorView(context: Context) : View(context) {
@@ -162,7 +202,9 @@ private class PressIndicatorView(
     private val density = resources.displayMetrics.density
 
     init {
-        paint.color = 0xFF2879FB.toInt() // Premium tech blue
+        // 白色落点：和系统「显示点按操作反馈」那种小白点一致，
+        // 不再用蓝色空心圈——那个在深色界面上像准星，看不清真实落点。
+        paint.color = 0xFFFFFFFF.toInt()
     }
 
     override fun startIndicatorAnimation(onFinished: () -> Unit) {
@@ -197,27 +239,19 @@ private class PressIndicatorView(
         super.onDraw(canvas)
         val cx = width / 2f
         val cy = height / 2f
-        val ringRadius = 20f * density
-
-        // 与目标控件保持清晰的空心边界，内部只给一层很轻的落点着色。
-        paint.style = Paint.Style.FILL
-        paint.alpha = if (kind == PressKind.LONG_PRESS) 0x38 else 0x2A
-        canvas.drawCircle(cx, cy, ringRadius, paint)
-
-        paint.style = Paint.Style.STROKE
-        paint.strokeWidth = if (kind == PressKind.LONG_PRESS) 2.5f * density else 2f * density
-        paint.alpha = 255
-        canvas.drawCircle(cx, cy, ringRadius, paint)
+        // 实心小白点：半径按「手指落点」的尺度给（约 6dp），长按略大一点。
+        val dotRadius = if (kind == PressKind.LONG_PRESS) 7f * density else 5.5f * density
 
         paint.style = Paint.Style.FILL
-        paint.alpha = 230
-        canvas.drawCircle(cx, cy, if (kind == PressKind.LONG_PRESS) 4f * density else 3f * density, paint)
+        paint.alpha = 235
+        canvas.drawCircle(cx, cy, dotRadius, paint)
 
         if (kind == PressKind.LONG_PRESS) {
+            // 长按再补一圈很淡的扩散环，提示「按住不放」。
             paint.style = Paint.Style.STROKE
             paint.strokeWidth = density
-            paint.alpha = 110
-            canvas.drawCircle(cx, cy, 25f * density, paint)
+            paint.alpha = 90
+            canvas.drawCircle(cx, cy, 13f * density, paint)
         }
     }
 }

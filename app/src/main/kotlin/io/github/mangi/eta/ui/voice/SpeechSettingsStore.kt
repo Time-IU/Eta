@@ -64,7 +64,7 @@ internal class SpeechSettingsStore(
     }
 
     private fun needsCredentials(value: SpeechSettings) = if (recognitionOnly) {
-        !value.asr.isLocal
+        !value.asr.isLocal && value.asr != io.github.mangi.eta.data.model.AsrProvider.SYSTEM
     } else if (synthesisOnly) {
         value.tts != TtsProvider.SYSTEM && value.tts != TtsProvider.NONE
     } else {

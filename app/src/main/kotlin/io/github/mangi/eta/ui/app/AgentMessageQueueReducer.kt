@@ -27,6 +27,7 @@ internal object AgentMessageQueueReducer {
             input = "",
             pendingImages = emptyList(),
             pendingFileReferences = emptyList(),
+            pendingMessageRefs = emptyList(),
             messageEdit = null,
             queuedMessages = nextQueue,
         )
@@ -57,6 +58,7 @@ internal object AgentMessageQueueReducer {
             input = "",
             pendingImages = emptyList(),
             pendingFileReferences = emptyList(),
+            pendingMessageRefs = emptyList(),
             messageEdit = null,
             queuedMessages = listOf(normalized) + rest,
         )

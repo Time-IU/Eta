@@ -85,3 +85,15 @@
 -keep class com.sun.jna.* { *; }
 -keepclassmembers class * extends com.sun.jna.* { public *; }
 -dontwarn java.awt.**
+
+# Additional virtual display entry points.
+-keep class io.github.mangi.eta.agent.display.RootDisplayCommandMain {
+    public static void main(java.lang.String[]);
+}
+-keep class io.github.mangi.eta.agent.display.VirtualScreenRootTextInput {
+    public static void main(java.lang.String[]);
+}
+
+# 虚拟屏幕悬浮小窗
+-keep class io.github.mangi.eta.agent.display.VirtualScreenFloatWindow { *; }
+-keepclassmembers class io.github.mangi.eta.agent.display.VirtualScreenFloatWindow$* { *; }

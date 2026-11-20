@@ -31,8 +31,16 @@ internal class PhoneAppTools(
         if (!calendar && !system && !colorOs())
             return if (tool in setOf("set_alarm", "list_alarms")) null
             else PhoneOperation.failure("DEVICE_UNSUPPORTED", "当前设备没有兼容的一方应用接口")
-        // 标准 Intent 仍承担显式震动设置；厂商创建接口没有对应参数，不能静默忽略。
-        if (tool == "set_alarm" && (arguments.has("vibrate") || !rootAvailable())) return null
+        // 闹钟优先走厂商直写接口：全程不发 Intent，不会拉起时钟界面。
+        // 有 Root 走 root 子进程；没有 Root 时也先让应用自身试一次，失败再回退标准 Intent。
+        if (tool == "set_alarm") {
+            if (rootAvailable()) return executeRoot(tool, arguments)
+            // 只要厂商接口给出了结果（含「已创建但未能回读确认」）就采信，避免回退 Intent 重复创建；
+            // 只有抛异常（接口不可用 / 被拒）才回退。
+            val viaProvider = runCatching { PhoneOperations.execute(context, tool, arguments) }.getOrNull()
+            if (viaProvider != null) return viaProvider
+            return null
+        }
         if (calendar && hasCalendarAccess(tool in PhoneOperation.writes))
             return PhoneOperations.execute(context, tool, arguments)
         if (!rootAvailable())
@@ -40,12 +48,22 @@ internal class PhoneAppTools(
                 if (calendar) "CALENDAR_PERMISSION_REQUIRED" else "ROOT_REQUIRED",
                 if (calendar) "请在权限健康页授予日历读取和写入权限" else "此一方应用接口需要 Root",
             )
+        return executeRoot(tool, arguments)
+    }
+
+    fun executeVivoPersonal(tool: String, arguments: JSONObject): JSONObject {
+        if (!rootAvailable()) return PhoneOperation.failure("ROOT_REQUIRED", "vivo 个人数据接口需要 Root")
+        return executeRoot(tool, arguments, "vivo_personal")
+    }
+
+    private fun executeRoot(tool: String, arguments: JSONObject, backend: String? = null): JSONObject {
         val request =
             JSONObject()
                 .put("version", 1)
                 .put("tool", tool)
                 .put("user_id", DeviceToolContract.appUserId(context))
                 .put("arguments", arguments)
+        backend?.let { request.put("backend", it) }
         val command =
             "CLASSPATH=${DeviceToolContract.quote(context.applicationInfo.sourceDir)} app_process /system/bin io.github.mangi.eta.agent.phone.PhoneCommandMain"
         val result =

@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="eta_runtime_title">Eta runtime</string>
+    <string name="eta_runtime_close">Close</string>
+    <string name="eta_runtime_unavailable">Unavailable — system did not provide access</string>
+    <string name="eta_runtime_waiting">Waiting for a fresh sample…</string>
+    <string name="eta_runtime_scope">Eta main process and observable same-UID processes only. Read-only; no Root required.</string>
+    <string name="eta_runtime_sources">Sources: ActivityManager / Debug.MemoryInfo and permitted /proc status/stat. CPU every 1.5 s; PSS and discovery no more often than 6 s. Sampling stops when closed or backgrounded.</string>
+    <string name="eta_runtime_memory">Application memory</string>
+    <string name="eta_runtime_pss">PSS: %1$s · available %2$d/%3$d</string>
+    <string name="eta_runtime_rss">RSS: %1$s · available %2$d/%3$d</string>
+    <string name="eta_runtime_rss_note">PSS shares are additive. RSS may count shared pages repeatedly; RSS sum is not unique physical memory. Totals include available rows only.</string>
+    <string name="eta_runtime_memory_note">PSS can be cached/rate-limited by Android; age is time since request, not guaranteed measurement freshness. Denied/zeroed PSS is unavailable, never a fake zero. No device memory percentage is used.</string>
+    <string name="eta_runtime_cpu">CPU: %1$s · sampled %2$d/%3$d</string>
+    <string name="eta_runtime_cpu_note" formatted="false">One logical CPU = 100%; multithreaded totals may exceed 100%. Delta of user + kernel CPU ticks over monotonic awake time; not whole-device normalization. First or restarted processes wait for a second sample.</string>
+    <string name="eta_runtime_power_gpu">Eta power / GPU: unsupported</string>
+    <string name="eta_runtime_power_gpu_note">No reliable public per-app power or GPU attribution is available here. Device battery current, device GPU load and zero are not substituted for Eta measurements.</string>
+    <string name="eta_runtime_processes">Visible processes · %1$d</string>
+    <string name="eta_runtime_visibility">Not a task count or complete census. UID is verified, never inferred from process names. Isolated/different-UID, Root and Linux-helper processes are excluded. Shared-UID apps cannot be distinguished. Processes may exit between samples.</string>
+    <string name="eta_runtime_partial">Some process data or discovery is restricted; the visible subtotal can be incomplete.</string>
+    <string name="eta_runtime_main">Eta main process</string>
+    <string name="eta_runtime_same_uid">Same-UID process</string>
+    <string name="eta_runtime_process_metrics">PSS %1$s\nRSS %2$s\nCPU %3$s</string>
+    <string name="eta_runtime_memory_age">PSS request age: %1$d s</string>
+    <string name="eta_runtime_empty">No available metrics</string>
+    <string name="eta_runtime_details">Sampling details</string>
+    <string name="eta_runtime_label_pss">PSS</string>
+    <string name="eta_runtime_label_rss">RSS</string>
+    <string name="eta_runtime_label_cpu">CPU</string>
+    <string name="eta_runtime_cached">cached</string>
+    <string name="eta_runtime_coverage">Available samples: %1$d/%2$d observed processes</string>
+    <string name="eta_runtime_process_title">Process · PID %1$d</string>
+    <string name="eta_runtime_expand_processes">Processes · %1$d · Expand</string>
+    <string name="eta_runtime_collapse_processes">Processes · %1$d · Collapse</string>
+</resources>

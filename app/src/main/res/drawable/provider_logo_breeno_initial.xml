@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Original B monogram for the borrowed Breeno preset; not an official logo. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="48dp" android:height="48dp"
+    android:viewportWidth="48" android:viewportHeight="48">
+    <path android:fillColor="#087F5B"
+        android:pathData="M24,0 A24,24 0,1 1,24,48 A24,24 0,1 1,24,0" />
+    <path android:fillColor="#FFFFFF" android:fillType="evenOdd"
+        android:pathData="M17,12 H25 C34,12 35,22 29,24 C37,27 33,37 25,37 H17 Z M21,16 V22 H25 C30,22 30,16 25,16 Z M21,26 V33 H25 C31,33 31,26 25,26 Z" />
+</vector>

@@ -1,0 +1,80 @@
+{
+  "baseline_commit": "17a73fdb3021efe11cd09cfe49783c692a2ffc6b",
+  "incoming_repository": "https://github.com/Oo0520/Eta-por",
+  "incoming_commit": "58a1faec3cdc1a43bac55f2617729710429bd15f",
+  "integration_mode": "Semantic merge retaining existing custom functionality and language support; incoming-only deferred details are listed in eta-por-integration.md",
+  "build": {
+    "task": ":app:assembleDebug",
+    "status": "passed",
+    "job_id": "job_3f12f892"
+  },
+  "jvm_tests": {
+    "tests": 2082,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 94,
+    "passed": 1988,
+    "suites": 383,
+    "task": ":app:testDebugUnitTest",
+    "job_id": "job_3f12f892",
+    "known_native_runtime_methods_excluded": 91,
+    "additional_legacy_environment_classes_excluded": [
+      "SystemVoicePolicyTest",
+      "CustomMessageSaveControllerTest",
+      "SpeechDictationGestureTest",
+      "MarkdownMathTest",
+      "ConversationBranchBoundaryTest"
+    ],
+    "full_project_full_environment_test_coverage": false
+  },
+  "artifact": {
+    "sha256": "11900c8b20f7007d101da048f0f246372b14e37fecd657bdcdfbe94fc39b7f58",
+    "bytes": 60433966,
+    "native_library_count": 15,
+    "baseline_native_libraries_all_identical": true,
+    "zip_integrity": "passed",
+    "signed": false,
+    "installed": false,
+    "published": false
+  },
+  "art_verification": {
+    "hard_verifier_abort_exit": 0,
+    "hard_verifier_job": "job_c9aec8b2",
+    "abort_on_soft_verifier_error_passed": false,
+    "soft_warning": "VirtualDisplayController.ensureVirtualDisplay lock verification",
+    "same_strict_soft_failure_reproduced_on_unchanged_custom5_baseline": true,
+    "not_a_full_strict_ART_pass": true
+  },
+  "retention": {
+    "all_3533_baseline_production_paths_present": true,
+    "english_simplified_traditional_baseline_resource_keys_lost": 0,
+    "duplicate_localized_resource_keys": 0,
+    "baseline_native_libraries_unchanged": 15,
+    "historical_migrations_6_to_27_unchanged": true,
+    "new_migration": "27 -> 28",
+    "root_license_unchanged": true
+  },
+  "review": {
+    "independent_reviews": [
+      "independent-review.md",
+      "followup-review.md",
+      "final-review.md"
+    ],
+    "fixed_findings_in_reviewed_scope": true,
+    "whole_application_security_certification": false
+  },
+  "unverified": [
+    "App UID / Binder end-to-end",
+    "real OEM assistant takeover",
+    "COUI/MIUIX visual and gesture acceptance",
+    "real speech and model deletion flow",
+    "independent screen subagent GUI execution"
+  ],
+  "publication": {
+    "pushed": false,
+    "released": false,
+    "installed": false,
+    "license_compatibility_unresolved": true
+  },
+  "evidence_directory": "/workspace/eta-publication/merge-eta-por-58a1faec/"
+}

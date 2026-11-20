@@ -12,6 +12,35 @@ import io.github.mangi.eta.ui.model.SystemNoticeMessageUi
 import io.github.mangi.eta.ui.model.UserMessageUi
 
 internal object RoleplayConversationReducer {
+    /** Draft ownership is transactional: edit refs never alias the suspended normal draft. */
+    fun beginEditDraft(state: AgentChatUiState, messageId: String): AgentChatUiState? {
+        if (state.roleplay == null || state.messageEdit != null || state.isStreaming ||
+            messageId !in state.roleplayMessages.links) return null
+        val content = state.messageContent(messageId) ?: return null
+        return state.copy(
+            input = content, pendingImages = emptyList(), pendingFileReferences = emptyList(),
+            pendingMessageRefs = emptyList(),
+            messageEdit = io.github.mangi.eta.ui.model.MessageEditUiState(
+                messageId, state.input, state.pendingImages, state.pendingFileReferences,
+                hasLaterTurns = false, preserveFollowingMessages = true,
+                previousMessageRefs = state.pendingMessageRefs.toList(),
+            ),
+        )
+    }
+
+    fun restoreEditDraft(state: AgentChatUiState): AgentChatUiState {
+        val edit = state.messageEdit ?: return state
+        return state.copy(input = edit.previousInput, pendingImages = edit.previousImages,
+            pendingFileReferences = edit.previousFileReferences,
+            pendingMessageRefs = edit.previousMessageRefs, messageEdit = null)
+    }
+
+    fun submitEditDraft(state: AgentChatUiState, content: String): AgentChatUiState? {
+        val edit = state.messageEdit?.takeIf { it.preserveFollowingMessages } ?: return null
+        val updated = edit(state, edit.targetMessageId, content) ?: return null
+        return restoreEditDraft(updated)
+    }
+
     fun restorePendingRewrite(state: AgentChatUiState, runId: String, messageId: String?): AgentChatUiState =
         if (state.roleplay == null || messageId == null || runId in state.appliedRuntimeRunIds) state else state.copy(
             roleplayMessages = state.roleplayMessages.copy(

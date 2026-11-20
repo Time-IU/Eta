@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="canvas_hook_sync_failed">Local settings are saved, but Hook synchronization failed. Root-only operation remains available. Remote authorization may still contain the previous value; retry synchronization. The new Hook must be loaded for the unified gate.</string>
+    <string name="canvas_hook_sync_unavailable">Hook synchronization is unavailable or pending. Local settings are retained and Root-only operation remains available; this is not remote confirmation. Retry when the framework is connected. The new Hook must be loaded.</string>
+    <string name="canvas_hook_sync_confirmed">Hook settings committed and read back through the framework. This does not confirm that a newly updated Hook has been loaded.</string>
+    <string name="canvas_hook_sync_retry">Retry Hook synchronization</string>
+    <string name="canvas_settings_action_failed">This action did not finish. Check the saved settings and retry. Hook synchronization is reported separately; no remote success is assumed.</string>
+</resources>

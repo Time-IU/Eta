@@ -7,5 +7,146 @@ data class Settings(
     val selectedProviderId: String? = null,
     val selectedModelId: String? = null,
     val memoryEnabled: Boolean = true,
+    val memoryAutoCompactEnabled: Boolean = true,
+    val autoMemoryEnabled: Boolean = true,
+    val autoSkillsEnabled: Boolean = true,
+    val virtualScreenEnabled: Boolean = false,
+    /** Auto/cross-application background execution; explicit virtual entry remains available. */
+    val unifiedCanvasBackgroundEnabled: Boolean = true,
+    val virtualScreenOffEnabled: Boolean = false,
+    val virtualScreenFallbackEnabled: Boolean = false,
+    val virtualScreenAutoRestartApps: Boolean = false,
+    val virtualScreenIdleTimeoutMinutes: Int = 5,
+    /** 灵屏运行期间保持屏幕常亮（Agent 操作不因息屏中断）。 */
+    val virtualScreenKeepScreenOn: Boolean = true,
+    val virtualScreenFloatWindowEnabled: Boolean = false,
+    val virtualScreenFloatEdgeCollapseEnabled: Boolean = true,
+    val virtualScreenFloatWindowWidthDp: Int = 0,
+    val virtualScreenFloatWindowHeightDp: Int = 0,
+    val virtualScreenFloatWindowAlpha: Float = 0.85f,
+    val virtualScreenFloatWindowPosX: Int = 16,
+    val virtualScreenFloatWindowPosY: Int = 120,
+    val autoBackupEnabled: Boolean = false,
+    /** 自动备份周期（分钟）：支持 10 分钟这种短周期；0 表示沿用老的小时字段。 */
+    val autoBackupIntervalMinutes: Int = 0,
+    /** 老字段（小时），仅作历史设置/老备份的兼容回退。 */
+    val autoBackupIntervalHours: Int = 24,
+    val autoBackupKeepCount: Int = 5,
+    val autoBackupLastAt: Long = 0L,
+    val autoBackupFingerprint: String = "",
+    val autoBackupLastFileName: String = "",
+    /** 上一次自动备份的失败原因；成功后清空。 */
+    val autoBackupLastError: String = "",
+    /** 上一次自动备份失败的时间（毫秒）。 */
+    val autoBackupLastErrorAt: Long = 0L,
+    /** 自定义自动备份目录；空串表示默认的「外部存储/Eta备份」。 */
+    val autoBackupDirectory: String = "",
+    /** 自动备份格式：json（轻量 JSON）/ full（全量压缩包，含私有目录）。 */
+    val autoBackupFormat: String = AutoBackupFormat.JSON,
+    /** 极致自动排查：本地定时巡检，只报异常，异常即留档。 */
+    val diagPatrolEnabled: Boolean = false,
+
+    /** 巡检周期（分钟）：5 ~ 43200，默认一天一次。 */
+    val diagPatrolIntervalMinutes: Int = 24 * 60,
+
+    /** 巡检报告保留份数：超出的删最旧，只动巡检自己的目录。 */
+    val diagPatrolKeepCount: Int = 30,
+
+    /** 只在出异常时提醒；关掉则每次巡检都提醒。 */
+    val diagPatrolNotifyOnlyAbnormal: Boolean = true,
+
+    val diagPatrolLastAt: Long = 0L,
+    val diagPatrolLastFile: String = "",
+
+    /** 上次巡检等级（正常/注意/异常），给界面和增量对比用。 */
+    val diagPatrolLastLevel: String = "",
+    val diagPatrolLastSummary: String = "",
+
+    /** 流体云常驻：没有任务时也在流体云保留一条 Eta 入口。 */
+    val overlayFluidPinned: Boolean = false,
+
+    /**
+     * 流体云通知降级：开启后进度卡、锁屏胶囊这类通知不再申请「持续提升」，
+     * 只做普通通知留在通知栏，不再占流体云/状态栏胶囊位。
+     */
+    val overlayFluidDowngrade: Boolean = false,
+
+    /**
+     * 新手引导进度：引导包 id → 已看过的版本。
+     *
+     * 为什么不是布尔：文案改版时把包的 version +1，老用户就会被重播一次；
+     * 布尔存不下这个语义，加第二个包时也没地方记。
+     */
+    val seenTourPacks: Map<String, Int> = emptyMap(),
+
+    /** 新手引导总开关：关掉后不再自动弹任何包，设置页仍可手动重播。 */
+    val onboardingEnabled: Boolean = true,
+
+    /** 最近打开过的会话 id（逗号分隔，最新在前）：重启后侧栏那一栏还在。 */
+    val recentOpenedConversationIds: String = "",
     val appearance: AppearanceSettings = AppearanceSettings(),
 )
+
+internal object VirtualScreenIdleTimeout {
+    val options = listOf(5, 10, 20, 60, 0)
+    fun normalize(minutes: Int): Int = minutes.takeIf { it in options } ?: 5
+}
+
+/** 自动备份周期：统一按分钟存，支持「每 10 分钟一次」这类短周期。 */
+internal object AutoBackupInterval {
+
+    /** 最短 5 分钟，再短会和闹钟重排互相打架。 */
+    const val MIN_MINUTES = 5
+
+    /** 最长 30 天。 */
+    const val MAX_MINUTES = 30 * 24 * 60
+
+    /** 默认 24 小时。 */
+    const val DEFAULT_MINUTES = 24 * 60
+
+    /** 周期不超过这个值时，每次都真的写一份备份（不按内容指纹跳过）。 */
+    const val ALWAYS_WRITE_MAX_MINUTES = 60
+
+    /** 常用预设（分钟）：10 分钟到 7 天。 */
+    val presets = listOf(10, 30, 60, 180, 360, 720, 1440, 4320, 10080)
+
+    /** 老设置里的小时预设，只用于兼容历史值。 */
+    val legacyHourOptions = listOf(24, 72, 168)
+
+    fun normalize(minutes: Int): Int = minutes.takeIf { it in MIN_MINUTES..MAX_MINUTES } ?: DEFAULT_MINUTES
+
+    /** 把老的小时字段换算成分钟。 */
+    fun fromLegacyHours(hours: Int): Int = normalize(hours * 60)
+
+    /** 生效周期（分钟）：分钟字段优先，缺失或非法时回落到老的小时字段。 */
+    fun effectiveMinutes(storedMinutes: Int, legacyHours: Int): Int =
+        if (storedMinutes in MIN_MINUTES..MAX_MINUTES) storedMinutes else fromLegacyHours(legacyHours)
+
+    /** 生效周期的毫秒数，供闹钟与到点判断使用。 */
+    fun millis(storedMinutes: Int, legacyHours: Int): Long = effectiveMinutes(storedMinutes, legacyHours) * 60_000L
+}
+
+/** 自动备份产物格式：轻量 JSON，或「JSON + 私有目录」的全量压缩包。 */
+internal object AutoBackupFormat {
+
+    const val JSON = "json"
+    const val FULL = "full"
+
+    val presets = listOf(JSON, FULL)
+
+    fun normalize(value: String): String = if (value.trim().equals(FULL, ignoreCase = true)) FULL else JSON
+
+    fun isFull(value: String): Boolean = normalize(value) == FULL
+}
+
+/** 自动备份保留份数，超出的删最旧；上限 60 份，够放 20~30 份这种短周期。 */
+internal object AutoBackupKeepCount {
+
+    const val MIN = 1
+    const val MAX = 60
+
+    /** 常用预设。 */
+    val presets = listOf(3, 5, 10, 20, 30, 50)
+
+    fun normalize(count: Int): Int = count.takeIf { it in MIN..MAX } ?: 5
+}

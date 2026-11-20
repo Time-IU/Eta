@@ -179,18 +179,12 @@ class RootShellTerminalControllerCancellationTest {
         }.getOrDefault(false)
 
     private fun newIsolatedGroupController(): RootShellTerminalController {
-        val setsid = File.createTempFile("eta-test-setsid-", ".py").apply {
+        val setsid = File.createTempFile("eta-test-setsid-", ".sh").apply {
             writeText(
                 """
-                #!/usr/bin/python3
-                import os
-                import sys
-
-                args = sys.argv[1:]
-                if args and args[0] == "-w":
-                    args = args[1:]
-                os.setsid()
-                os.execvp(args[0], args)
+                #!/bin/sh
+                # Exercise the real POSIX session helper from PATH; no hardcoded Python install.
+                exec setsid "${'$'}@"
                 """.trimIndent()
             )
             check(setExecutable(true))

@@ -1,5 +1,8 @@
 package io.github.mangi.eta.ui.markdown
 
+import io.github.mangi.eta.ui.components.custom.rememberMessageSentenceBinding
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.OverscrollEffect
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
@@ -93,8 +96,13 @@ internal fun MarkdownContent(
     style: MarkdownStyle,
     modifier: Modifier = Modifier,
     reveal: SmoothTextRevealCoordinator? = null,
+    highlight: IntRange? = null,
+    onTaskToggle: ((Int) -> Unit)? = null,
+    codeWrap: Boolean = false,
 ) {
-    val scope = remember(style, reveal) { MarkdownRenderScope(style, reveal) }
+    val scope = remember(style, reveal, highlight, onTaskToggle, codeWrap) {
+        MarkdownRenderScope(style, reveal, highlight = highlight, onTaskToggle = onTaskToggle, codeWrap = codeWrap)
+    }
     MarkdownBlockColumn(blocks = document.blocks, scope = scope, compact = false, modifier = modifier)
 }
 
@@ -162,8 +170,12 @@ private class MarkdownRenderScope(
     val style: MarkdownStyle,
     val reveal: SmoothTextRevealCoordinator?,
     val inQuote: Boolean = false,
+    val highlight: IntRange? = null,
+    val onTaskToggle: ((Int) -> Unit)? = null,
+    val codeWrap: Boolean = false,
 ) {
-    fun quoted() = MarkdownRenderScope(style.quoted(), reveal, inQuote = true)
+    fun quoted() = MarkdownRenderScope(style.quoted(), reveal, inQuote = true,
+        highlight = highlight, onTaskToggle = onTaskToggle, codeWrap = codeWrap)
 }
 
 /** 嵌套列表的层级只影响 marker 字形，用 CompositionLocal 传递，块组件不必逐层转发。 */
@@ -239,11 +251,19 @@ private fun MarkdownText(
     softWrap: Boolean = true,
     maxInlineMathWidth: Dp? = null,
 ) {
+    val sentence = rememberMessageSentenceBinding()
+    val renderText = if (scope.highlight == null || block.text.isEmpty()) block.text else {
+        val start = (scope.highlight.first - block.offset).coerceIn(0, block.text.length)
+        val end = (scope.highlight.last + 1 - block.offset).coerceIn(start, block.text.length)
+        if (start >= end) block.text else AnnotatedString.Builder(block.text).apply {
+            addStyle(SpanStyle(background = MiuixTheme.colorScheme.primary.copy(alpha = 0.18f)), start, end)
+        }.toAnnotatedString()
+    }
     val inlineContent = if (block.inlineMath.isEmpty()) {
         emptyMap()
     } else {
         rememberInlineMathContentMap(
-            text = block.text,
+            text = renderText,
             specs = block.inlineMath,
             textStyle = style,
             fallbackColor = scope.style.textColor,
@@ -254,11 +274,12 @@ private fun MarkdownText(
     // 空单元格没有可显现的文字，也不占用显现协调器的 key。
     if (reveal == null || block.text.isEmpty()) {
         Text(
-            text = block.text,
+            text = renderText,
             style = style,
             softWrap = softWrap,
             inlineContent = inlineContent,
-            modifier = modifier,
+            modifier = modifier.then(sentence.modifier),
+            onTextLayout = sentence.onTextLayout,
         )
         return
     }
@@ -273,12 +294,15 @@ private fun MarkdownText(
     // 显现裁剪按字素边界逐帧变化，关闭像素对齐可避免裁剪边缘抖动。
     val animatedStyle = remember(style) { style.copy(textMotion = TextMotion.Animated) }
     Text(
-        text = block.text,
+        text = renderText,
         style = animatedStyle,
         softWrap = softWrap,
         inlineContent = inlineContent,
-        modifier = modifier.smoothTextReveal(revealState),
-        onTextLayout = { layout -> revealState.onTextLayout(block.text.text, layout, atomicSpans) },
+        modifier = modifier.then(sentence.modifier).smoothTextReveal(revealState),
+        onTextLayout = { layout ->
+            sentence.onTextLayout(layout)
+            revealState.onTextLayout(block.text.text, layout, atomicSpans)
+        },
     )
 }
 
@@ -301,6 +325,7 @@ private fun MarkdownCodeBlock(block: MarkdownCode, scope: MarkdownRenderScope) {
                 .padding(start = 14.dp, end = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
+            val languageHit = rememberMessageSentenceBinding(allowDoubleTap = false)
             Text(
                 text = block.language ?: stringResource(R.string.markdown_code_block),
                 style = MiuixTheme.textStyles.footnote2.copy(
@@ -311,7 +336,8 @@ private fun MarkdownCodeBlock(block: MarkdownCode, scope: MarkdownRenderScope) {
                 color = style.secondaryColor,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f),
+                modifier = Modifier.weight(1f).then(languageHit.modifier),
+                onTextLayout = languageHit.onTextLayout,
             )
             CopyButton(text = block.text.text, tint = style.secondaryColor)
         }
@@ -325,10 +351,10 @@ private fun MarkdownCodeBlock(block: MarkdownCode, scope: MarkdownRenderScope) {
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .horizontalScroll(rememberScrollState())
+                .then(if (scope.codeWrap) Modifier else Modifier.horizontalScroll(rememberScrollState()))
                 .padding(horizontal = 14.dp, vertical = 11.dp),
         ) {
-            MarkdownText(block, style.code, scope, softWrap = false)
+            MarkdownText(block, style.code, scope, softWrap = scope.codeWrap)
         }
     }
 }
@@ -432,8 +458,11 @@ private fun MarkdownAlertBlock(block: MarkdownAlert, scope: MarkdownRenderScope)
                 tint = accent,
             )
             Spacer(Modifier.width(6.dp))
+            val labelHit = rememberMessageSentenceBinding(allowDoubleTap = false)
             Text(
                 text = stringResource(block.kind.label),
+                modifier = labelHit.modifier,
+                onTextLayout = labelHit.onTextLayout,
                 style = MiuixTheme.textStyles.body2.copy(
                     fontSize = 13.5.sp,
                     fontWeight = FontWeight.Bold,
@@ -581,7 +610,10 @@ private fun RowScope.ListMarker(
             Box(
                 modifier = markerModifier
                     .padding(top = topInset)
-                    .height(lineHeight),
+                    .height(lineHeight)
+                    .then(scope.onTaskToggle?.let { toggle ->
+                        Modifier.clickable { toggle(item.offset) }
+                    } ?: Modifier),
                 contentAlignment = Alignment.CenterStart,
             ) {
                 Icon(
@@ -592,13 +624,17 @@ private fun RowScope.ListMarker(
                 )
             }
         }
-        ordered -> Text(
-            text = "${item.number}.",
-            style = style.body.copy(fontWeight = FontWeight.Medium),
-            color = style.markerColor,
-            textAlign = TextAlign.Start,
-            modifier = markerModifier.alignByBaseline(),
-        )
+        ordered -> {
+            val markerHit = rememberMessageSentenceBinding(allowDoubleTap = false)
+            Text(
+                text = "${item.number}.",
+                onTextLayout = markerHit.onTextLayout,
+                style = style.body.copy(fontWeight = FontWeight.Medium),
+                color = style.markerColor,
+                textAlign = TextAlign.Start,
+                modifier = markerModifier.alignByBaseline().then(markerHit.modifier),
+            )
+        }
         else -> {
             val lineHeight = with(LocalDensity.current) { firstLineHeightSp.toDp() }
             val bulletColor = style.markerColor

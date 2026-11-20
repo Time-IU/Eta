@@ -43,6 +43,7 @@ import io.github.mangi.eta.ui.components.coui.CouiTextField
 import top.yukonga.miuix.kmp.basic.DropdownItem
 import top.yukonga.miuix.kmp.basic.Icon
 import top.yukonga.miuix.kmp.basic.IconButton
+import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.basic.TextField
 import top.yukonga.miuix.kmp.preference.SwitchPreference
 import top.yukonga.miuix.kmp.preference.WindowSpinnerPreference
@@ -69,6 +70,18 @@ internal fun ProviderConnectionFields(
         provider is GeminiProviderSetting ||
             (draft.endpointMode == OpenAiEndpointMode.RESPONSES && provider !is AnthropicProviderSetting)
 
+    val baseUrlError = when {
+        ProviderAuthModes.isBorrowedVendor(draft.authMode) || draft.baseUrl.isBlank() -> null
+        !draft.baseUrl.startsWith("http://") && !draft.baseUrl.startsWith("https://") ->
+            "地址要以 http:// 或 https:// 开头"
+        else -> null
+    }
+    val apiKeyError = when {
+        draft.apiKey.isBlank() || oauth || ProviderAuthModes.isBorrowedVendor(draft.authMode) -> null
+        draft.apiKey.any { it.isWhitespace() } -> "Key 里有空格或换行，检查是否复制完整"
+        draft.apiKey.length < 8 -> "Key 太短，可能没复制全"
+        else -> null
+    }
     when (LocalUiStyle.current) {
         AppearanceUiStyle.COUI -> {
             val colors = CouiPageDefaults.themeColors()
@@ -304,4 +317,12 @@ internal fun ProviderConnectionFields(
             }
         }
     }
+    if (!oauth && (baseUrlError != null || apiKeyError != null)) {
+        Column(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
+            listOfNotNull(baseUrlError, apiKeyError).forEach { warning ->
+                Text(text = warning, color = io.github.mangi.eta.ui.components.StatusWarning)
+            }
+        }
+    }
+
 }

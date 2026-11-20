@@ -9,9 +9,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import io.github.mangi.eta.ui.model.AgentChatMessageUi
-import io.github.mangi.eta.ui.model.AgentMessageUi
-import io.github.mangi.eta.ui.model.ThinkingMessageUi
-import io.github.mangi.eta.ui.model.UserMessageUi
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
@@ -68,6 +65,11 @@ internal class ChatSearchState {
         selected = hits.getOrNull(selectedIndex)?.anchor
         locate()
     }
+    fun selectHit(index: Int) {
+        selectedIndex = index.takeIf { it in hits.indices } ?: return
+        selected = hits[selectedIndex].anchor
+        locate()
+    }
     fun locate() { navigationVersion++ }
     fun close() {
         open = false
@@ -81,26 +83,21 @@ internal class ChatSearchState {
 @Composable
 internal fun rememberChatSearch(messages: List<AgentChatMessageUi>): ChatSearchState {
     val state = remember { ChatSearchState() }
-    LaunchedEffect(messages, state.query, state.open) {
-        if (!state.open) return@LaunchedEffect
+    // No worker/effect exists while hidden, even when streamed messages change every frame.
+    if (chatSearchWorkEnabled(state.open, state.query)) LaunchedEffect(messages, state.query) {
         val query = state.query
+        val open = state.open
         // Do not scan on the UI thread or debounce the stream indefinitely. Cancellation drops
         // outdated computations; the last same-query snapshot stays usable while new text arrives.
         val result = withContext(Dispatchers.Default) {
             val context = currentCoroutineContext()
-            val documents = if (query.isBlank()) emptyList() else messages.mapNotNull { message ->
-                context.ensureActive()
-                val body = when (message) {
-                    is UserMessageUi -> message.content
-                    is AgentMessageUi -> message.content
-                    is ThinkingMessageUi -> message.content
-                    else -> null // Tool metadata/system status are not message bodies.
-                }
-                body?.let { ChatSearchDocument(message.id, it) }
-            }
+            val documents = conversationSearchDocuments(messages) { context.ensureActive() }
             ChatSearchSnapshot(query, documents, findChatSearchHits(documents, query) { context.ensureActive() }, messages)
         }
         state.update(result)
     }
     return state
 }
+
+internal val LocalConversationSearch = androidx.compose.runtime.compositionLocalOf<ChatSearchState?> { null }
+internal val LocalConversationSearchPaging = androidx.compose.runtime.compositionLocalOf<ChatSearchHistoryPagingState?> { null }

@@ -117,12 +117,7 @@ internal fun ChatSearchToolbar(
             onClose()
         }
     }
-    if (!open) {
-        Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), horizontalArrangement = Arrangement.End) {
-            ChatSearchButton(Icons.Rounded.Search, stringResource(R.string.chat_search_open), true, onOpen)
-        }
-        return
-    }
+    if (!open) return // The overflow menu is the only idle entry; zero layout height.
 
     Column(
         Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp)
@@ -171,7 +166,7 @@ internal fun ChatSearchToolbar(
                 hideKeyboard(); onNext()
             }
         }
-        if (query.isNotBlank()) {
+        if (open) {
             Row(Modifier.fillMaxWidth().padding(start = 14.dp, end = 14.dp, bottom = 8.dp),
                 verticalAlignment = Alignment.CenterVertically) {
                 val scope = when {

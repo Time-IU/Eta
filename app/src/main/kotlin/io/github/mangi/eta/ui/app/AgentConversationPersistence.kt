@@ -21,10 +21,27 @@ internal class AgentConversationPersistence(initial: AgentConversationStore.Snap
     // 已提交但尚未进入 Main 状态的分支必须合入旧快照，直到保存队列观察到发布后的状态。
     private var unpublishedBranches = emptyMap<String, Content>()
 
-    suspend fun save(context: Context, snapshot: AgentConversationStore.Snapshot) = mutex.withLock {
+    /** 只加载了元数据的会话：保存时只落元数据，绝不碰 messages / checkpoint（#006）。 */
+    private var partiallyLoaded: Set<String> = initial?.partiallyLoadedConversationIds.orEmpty()
+
+    suspend fun save(
+        context: Context,
+        snapshot: AgentConversationStore.Snapshot,
+        /** 见 [AgentConversationStore.saveChanges]：null 表示本次不改归属。 */
+        categoryIds: Map<String, String>? = null,
+    ) = mutex.withLock {
         val projected = project(snapshot)
         val current = unpublishedBranches + projected
-        AgentConversationStore.saveChanges(context, snapshot.selectedConversationId, current, saved)
+        partiallyLoaded = snapshot.partiallyLoadedConversationIds
+        AgentConversationStore.saveChanges(
+            context = context,
+            selectedConversationId = snapshot.selectedConversationId,
+            current = current,
+            previous = saved,
+            partiallyLoadedConversationIds = partiallyLoaded,
+            categoryIds = categoryIds,
+            preservedCategoryIds = unpublishedBranches.keys,
+        )
         saved = current
         unpublishedBranches = unpublishedBranches - projected.keys
     }
@@ -81,6 +98,7 @@ internal class AgentConversationPersistence(initial: AgentConversationStore.Snap
         val journal: List<AgentModelClient.ConversationMessage>,
         val isConversationLoaded: Boolean,
         val messageStartIndex: Int,
+        val lastModelUsage: io.github.mangi.eta.ui.model.TokenUsageUi?,
     ) {
         constructor(
             state: AgentChatHomeUiState,
@@ -92,12 +110,13 @@ internal class AgentConversationPersistence(initial: AgentConversationStore.Snap
             state.roleplay, if (state.roleplay == null) RoleplayMessageState() else state.roleplayMessages,
             state.modelId, state.messages, state.history, state.journal.ifEmpty { state.history },
             state.isConversationLoaded, state.messageStartIndex,
+            state.lastModelUsage,
         )
 
         fun sameMetadata(other: Content): Boolean =
             title == other.title && updatedAt == other.updatedAt && isPinned == other.isPinned &&
                 reasoningEffort == other.reasoningEffort &&
                 appliedRuntimeRunIds == other.appliedRuntimeRunIds && roleplay == other.roleplay &&
-                roleplayMessages == other.roleplayMessages && modelId == other.modelId
+                roleplayMessages == other.roleplayMessages && modelId == other.modelId && lastModelUsage == other.lastModelUsage
     }
 }

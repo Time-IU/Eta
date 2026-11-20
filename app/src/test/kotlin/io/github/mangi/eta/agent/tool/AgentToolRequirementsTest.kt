@@ -22,6 +22,26 @@ class AgentToolRequirementsTest {
     }
 
     @Test
+    fun explicitOwnedScreenEntryHasSchemaAndRetainsItsRootAndGuiBoundary() {
+        val rootCatalog = catalog(root = true)
+        assertTrue("explicit owned-display launch must be published", "lingscreen_open_app" in rootCatalog.names())
+        assertFalse("owned screen cannot be advertised as a rootless main-screen launch", "lingscreen_open_app" in catalog(root = false).names())
+        val requirement = requireNotNull(AgentToolRequirements.find("lingscreen_open_app"))
+        assertEquals(RootRequirement.REQUIRED, requirement.rootRequirement)
+        assertTrue(requirement.gui)
+        assertTrue(AgentToolRequirements.rootDenied("lingscreen_open_app", JSONObject(), false))
+        assertFalse(AgentToolRequirements.rootDenied("launch_app", JSONObject(), false))
+        val properties = rootCatalog.properties("lingscreen_open_app")
+        assertTrue(properties.has("package_name"))
+        assertTrue(properties.has("app_name"))
+        assertFalse("explicit owned-display tool cannot override its route to main", properties.has("display"))
+        val withoutDirectTools = AgentToolCatalog.build(terminalTools = false, browserTools = false,
+            deviceDirectTools = false, capabilities = AgentToolCapabilities(rootAvailable = true)).names()
+        assertFalse("direct-tool permission flag also controls publication", "lingscreen_open_app" in withoutDirectTools)
+        assertTrue("ordinary application launching is not removed", "launch_app" in withoutDirectTools)
+    }
+
+    @Test
     fun ordinaryCatalogDoesNotExposeCharacterMemoryTools() {
         assertTrue(catalog(root = true).names().none { it in CharacterMemoryTools.NAMES })
     }
@@ -95,6 +115,18 @@ class AgentToolRequirementsTest {
             .unavailableCode("search_bills"))
         assertEquals(null, AgentToolCapabilities(rootAvailable = true, colorOs = true, lsposedAvailable = false)
             .unavailableCode("search_bills"))
+    }
+
+    @Test
+    fun vivoExposesOnlyAdaptedPersonalSourcesAndStillRequiresRoot() {
+        val vivo = AgentToolCapabilities(rootAvailable = true, colorOs = false, vivo = true)
+        for (name in listOf("search_notes", "search_todos", "read_personal_item")) {
+            assertEquals(null, vivo.unavailableCode(name))
+            assertEquals("ROOT_REQUIRED", vivo.copy(rootAvailable = false).unavailableCode(name))
+        }
+        for (name in listOf("search_bills", "search_system_memories", "search_coloros_recordings", "create_note", "delete_note")) {
+            assertEquals("DEVICE_UNSUPPORTED", vivo.unavailableCode(name))
+        }
     }
 
     private fun catalog(root: Boolean) = AgentToolCatalog.build(

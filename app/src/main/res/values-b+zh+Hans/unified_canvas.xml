@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="unified_canvas_title">后台画布</string>
+    <string name="unified_canvas_enable">启用后台画布</string>
+    <string name="unified_canvas_enable_summary">灵屏和虚拟屏共用同一运行引擎；保留原有设置与选择。</string>
+    <string name="unified_canvas_background">自动后台执行</string>
+    <string name="unified_canvas_background_summary">跨应用任务优先在后台画布执行；关闭后仍可显式选择在后台打开。</string>
+</resources>

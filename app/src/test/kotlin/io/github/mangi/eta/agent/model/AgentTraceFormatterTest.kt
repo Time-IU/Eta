@@ -421,6 +421,7 @@ class AgentTraceFormatterTest {
         )
 
         assertEquals("已读取记忆", summary)
+        assertFalse(summary.contains("ok="))
         assertFalse(summary.contains("9 行"))
         assertFalse(summary.contains("321 字节"))
         assertFalse(summary.contains("private memory"))

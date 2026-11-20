@@ -10,6 +10,22 @@ import androidx.room.Upsert
 
 @Dao
 internal interface ConversationDao : ChunkedTextDao {
+    @Query("SELECT COUNT(*) FROM conversations")
+    suspend fun conversationCount(): Int
+
+    @Query("SELECT COUNT(*) FROM conversation_messages")
+    suspend fun messageCount(): Int
+
+    /**
+     * sort_index 与行下标不一致的会话（流式占位留下的空洞）。
+     * 这类会话必须整段读、整段重写，否则空洞会一直留着（#006 懒加载后仍要保住这条修复路径）。
+     */
+    @Query(
+        "SELECT conversation_id FROM conversation_messages GROUP BY conversation_id " +
+            "HAVING MIN(sort_index) != 0 OR MAX(sort_index) != COUNT(*) - 1"
+    )
+    suspend fun misalignedConversationIds(): List<String>
+
     @Query(
         "SELECT c.id, c.title, c.reasoning_effort, c.created_at, c.updated_at, c.model_id, c.is_pinned, " +
             "(c.roleplay_json != '') AS has_roleplay, " +
@@ -23,15 +39,24 @@ internal interface ConversationDao : ChunkedTextDao {
     )
     suspend fun conversationIndex(): List<ConversationIndexRow>
 
-    @Query("SELECT id, title, created_at, updated_at, is_pinned FROM conversations")
+    @Query(
+        "SELECT id, title, created_at, updated_at, is_pinned, category_id, " +
+            "parent_conversation_id, parent_message_id, branch_root_id FROM conversations"
+    )
     suspend fun conversationIdentities(): List<ConversationIdentity>
 
+    /** Title-only callers must not implicitly clear an existing pin. */
+    @Query("UPDATE conversations SET title = :title, updated_at = :updatedAt WHERE id = :conversationId")
+    suspend fun updateConversationTitle(conversationId: String, title: String, updatedAt: Long)
+
     @Query("UPDATE conversations SET title = :title, updated_at = :updatedAt, is_pinned = :isPinned WHERE id = :conversationId")
-    suspend fun updateConversationTitle(conversationId: String, title: String, updatedAt: Long, isPinned: Boolean = false)
+    suspend fun updateConversationTitle(conversationId: String, title: String, updatedAt: Long, isPinned: Boolean)
 
     @Query(
         "SELECT id, title, thinking_enabled, reasoning_effort, " +
-            "applied_runtime_run_ids_json, roleplay_json, revisions_json, created_at, updated_at, model_id, is_pinned " +
+            "applied_runtime_run_ids_json, roleplay_json, revisions_json, " +
+            "last_model_usage_json, created_at, updated_at, model_id, is_pinned, category_id, " +
+            "parent_conversation_id, parent_message_id, branch_root_id " +
             "FROM conversations WHERE id = :conversationId"
     )
     suspend fun conversationMetadataRow(conversationId: String): ConversationMetadata?
@@ -42,8 +67,9 @@ internal interface ConversationDao : ChunkedTextDao {
 
     @Query(
         "SELECT id, title, thinking_enabled, reasoning_effort, " +
-            "applied_runtime_run_ids_json, roleplay_json, revisions_json, created_at, updated_at, model_id, is_pinned " +
-            "FROM conversations ORDER BY updated_at DESC"
+            "applied_runtime_run_ids_json, roleplay_json, revisions_json, last_model_usage_json, created_at, updated_at, model_id, is_pinned, category_id, " +
+            "parent_conversation_id, parent_message_id, branch_root_id " +
+            "FROM conversations ORDER BY is_pinned DESC, updated_at DESC"
     )
     suspend fun conversationMetadataRows(): List<ConversationMetadata>
 
@@ -52,8 +78,9 @@ internal interface ConversationDao : ChunkedTextDao {
 
     @Query(
         "SELECT id, title, thinking_enabled, reasoning_effort, " +
-            "applied_runtime_run_ids_json, roleplay_json, revisions_json, created_at, updated_at, model_id, is_pinned " +
-            "FROM conversations ORDER BY updated_at DESC LIMIT :limit OFFSET :offset"
+            "applied_runtime_run_ids_json, roleplay_json, revisions_json, last_model_usage_json, created_at, updated_at, model_id, is_pinned, category_id, " +
+            "parent_conversation_id, parent_message_id, branch_root_id " +
+            "FROM conversations ORDER BY is_pinned DESC, updated_at DESC LIMIT :limit OFFSET :offset"
     )
     suspend fun conversationMetadataPage(limit: Int, offset: Int): List<ConversationMetadata>
 
@@ -100,6 +127,19 @@ internal interface ConversationDao : ChunkedTextDao {
 
     @Query("SELECT * FROM conversation_messages ORDER BY conversation_id ASC, sort_index ASC LIMIT :limit OFFSET :offset")
     suspend fun allMessageRowsPage(limit: Int, offset: Int): List<ConversationMessageEntity>
+
+    @Query(
+        "SELECT owner_table AS owner_table, owner_id AS owner_id, field AS field, " +
+            "COUNT(*) AS chunk_count, SUM(LENGTH(content)) AS char_count FROM agent_text_chunks " +
+            "GROUP BY owner_table, owner_id, field ORDER BY char_count DESC"
+    )
+    suspend fun chunkUsage(): List<TextChunkUsage>
+
+    @Query("SELECT COUNT(*) FROM agent_text_chunks")
+    suspend fun textChunkCount(): Int
+
+    @Query("SELECT COALESCE(SUM(LENGTH(content)), 0) FROM agent_text_chunks")
+    suspend fun textChunkChars(): Long
 
     @Query("SELECT * FROM conversation_context_checkpoints ORDER BY conversation_id ASC")
     suspend fun contextCheckpointRows(): List<ConversationContextCheckpointEntity>
@@ -181,10 +221,78 @@ internal interface ConversationDao : ChunkedTextDao {
     suspend fun contextCheckpoint(conversationId: String): ConversationContextCheckpointEntity? =
         contextCheckpointRow(conversationId)?.let { restoreCheckpoint(it) }
 
-    suspend fun restoreCheckpoint(row: ConversationContextCheckpointEntity) = row.copy(
-        historyJson = restoreText("conversation_context_checkpoints", row.conversationId, "history", row.historyJson),
-        journalJson = restoreText("conversation_context_checkpoints", row.conversationId, "journal", row.journalJson),
+    /** 上下文只取最近一段（窗口内）；journal 与 history 相同时不重复读。 */
+    suspend fun restoreCheckpoint(row: ConversationContextCheckpointEntity): ConversationContextCheckpointEntity {
+        val history = restoreTextTail(
+            "conversation_context_checkpoints", row.conversationId, "history", row.historyJson,
+            ChunkedTextDao.MAX_RESTORE_CHARS,
+        )
+        val journal = if (row.journalJson.isBlank()) {
+            history
+        } else {
+            restoreTextTail(
+                "conversation_context_checkpoints", row.conversationId, "journal", row.journalJson,
+                ChunkedTextDao.MAX_RESTORE_CHARS,
+            )
+        }
+        return row.copy(historyJson = history, journalJson = journal)
+    }
+
+    @Query("UPDATE conversation_context_checkpoints SET history_json = :stored WHERE conversation_id = :conversationId")
+    suspend fun setCheckpointHistory(conversationId: String, stored: String)
+
+    @Query("UPDATE conversation_context_checkpoints SET journal_json = :stored WHERE conversation_id = :conversationId")
+    suspend fun setCheckpointJournal(conversationId: String, stored: String)
+
+    @Query("SELECT * FROM conversation_messages WHERE id = :messageId")
+    suspend fun messageRow(messageId: String): ConversationMessageEntity?
+
+    @Query("UPDATE conversation_messages SET content = :stored WHERE id = :messageId")
+    suspend fun setMessageContent(messageId: String, stored: String)
+
+    @Query("UPDATE conversation_messages SET images_json = :stored WHERE id = :messageId")
+    suspend fun setMessageImages(messageId: String, stored: String)
+
+    @Query("SELECT * FROM conversations WHERE id = :conversationId")
+    suspend fun conversationEntityRow(conversationId: String): ConversationEntity?
+
+    @Query("UPDATE conversations SET applied_runtime_run_ids_json = :stored WHERE id = :conversationId")
+    suspend fun setConversationRuns(conversationId: String, stored: String)
+
+    @Query("UPDATE conversations SET roleplay_json = :stored WHERE id = :conversationId")
+    suspend fun setConversationRoleplay(conversationId: String, stored: String)
+
+    @Query("UPDATE conversations SET revisions_json = :stored WHERE id = :conversationId")
+    suspend fun setConversationRevisions(conversationId: String, stored: String)
+
+    /** 分叉落库：分支会话在「首次保存」之后补上来源、分叉点与整棵树的根。 */
+    @Query(
+        "UPDATE conversations SET parent_conversation_id = :parentConversationId, " +
+            "parent_message_id = :parentMessageId, branch_root_id = :branchRootId WHERE id = :conversationId"
     )
+    suspend fun setConversationBranch(
+        conversationId: String,
+        parentConversationId: String?,
+        parentMessageId: String?,
+        branchRootId: String?,
+    )
+
+    /**
+     * 分支树：根会话 + 所有 branch_root_id 指向它的会话。
+     * 老数据（迁移回填）把 branch_root_id 写成自身 id，所以根也会被 OR 条件兜住。
+     */
+    @Query(
+        "SELECT c.id, c.title, c.created_at, c.parent_conversation_id, c.parent_message_id, " +
+            "(SELECT COUNT(*) FROM conversation_messages m WHERE m.conversation_id = c.id) AS message_count, " +
+            "COALESCE((SELECT substr(m2.content, 1, 96) FROM conversation_messages m2 " +
+            "WHERE m2.conversation_id = c.parent_conversation_id AND m2.id = c.parent_message_id LIMIT 1), '') AS fork_preview " +
+            "FROM conversations c WHERE c.branch_root_id = :rootConversationId OR c.id = :rootConversationId " +
+            "ORDER BY c.created_at ASC, c.id ASC"
+    )
+    suspend fun conversationBranchNodes(rootConversationId: String): List<ConversationBranchNodeRow>
+
+    @Query("SELECT branch_root_id FROM conversations WHERE id = :conversationId")
+    suspend fun branchRootOf(conversationId: String): String?
 
     @Query("SELECT * FROM conversation_state WHERE id = :id")
     suspend fun state(id: String = ConversationStateEntity.SINGLETON_ID): ConversationStateEntity?
@@ -227,10 +335,16 @@ internal interface ConversationDao : ChunkedTextDao {
     @Transaction
     suspend fun insertContextCheckpoints(checkpoints: List<ConversationContextCheckpointEntity>) {
         checkpoints.forEach { row ->
-            insertContextCheckpointRow(row.copy(
-                historyJson = storeText("conversation_context_checkpoints", row.conversationId, "history", row.historyJson),
-                journalJson = storeText("conversation_context_checkpoints", row.conversationId, "journal", row.journalJson),
-            ))
+            val historyStored = storeText(
+                "conversation_context_checkpoints", row.conversationId, "history", row.historyJson,
+            )
+            // journal 与 history 逐字相同时不再重复存一份（读取时回落到 history）。
+            val journalStored = if (row.journalJson == row.historyJson) {
+                ""
+            } else {
+                storeText("conversation_context_checkpoints", row.conversationId, "journal", row.journalJson)
+            }
+            insertContextCheckpointRow(row.copy(historyJson = historyStored, journalJson = journalStored))
         }
     }
 
@@ -241,8 +355,13 @@ internal interface ConversationDao : ChunkedTextDao {
         insertContextCheckpointRow(previous.copy(
             historyJson = historyJson?.let { storeText("conversation_context_checkpoints", conversationId, "history", it) }
                 ?: previous.historyJson,
-            journalJson = journalJson?.let { storeText("conversation_context_checkpoints", conversationId, "journal", it) }
-                ?: previous.journalJson,
+            journalJson = journalJson?.let {
+                if (it.isNotEmpty() && it == historyJson) {
+                    ""
+                } else {
+                    storeText("conversation_context_checkpoints", conversationId, "journal", it)
+                }
+            } ?: previous.journalJson,
         ))
     }
 
@@ -251,6 +370,28 @@ internal interface ConversationDao : ChunkedTextDao {
 
     @Query("DELETE FROM conversations")
     suspend fun deleteConversations()
+
+    @Query("UPDATE conversations SET is_pinned = :pinned WHERE id = :conversationId")
+    suspend fun setConversationPinned(conversationId: String, pinned: Boolean)
+
+    @Query("SELECT * FROM conversation_categories ORDER BY sort_order ASC, created_at ASC")
+    suspend fun categories(): List<ConversationCategoryEntity>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertCategory(category: ConversationCategoryEntity)
+
+    @Query("DELETE FROM conversation_categories WHERE id = :categoryId")
+    suspend fun deleteCategory(categoryId: String)
+
+    /** 仅在恢复带分类的备份时使用：先用备份里的分类整体替换本机分类表。 */
+    @Query("DELETE FROM conversation_categories")
+    suspend fun deleteAllCategories()
+
+    @Query("UPDATE conversations SET category_id = NULL WHERE category_id = :categoryId")
+    suspend fun clearCategoryAssignments(categoryId: String)
+
+    @Query("UPDATE conversations SET category_id = :categoryId WHERE id = :conversationId")
+    suspend fun setConversationCategory(conversationId: String, categoryId: String?)
 
     @Query("DELETE FROM conversations WHERE id = :conversationId")
     suspend fun deleteConversation(conversationId: String)

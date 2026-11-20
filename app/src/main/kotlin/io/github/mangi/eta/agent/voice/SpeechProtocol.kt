@@ -13,7 +13,12 @@ internal enum class SpeechErrorCode {
     RATE_LIMITED, SERVER, PROTOCOL, NO_SPEECH, BACKPRESSURE, STORAGE,
 }
 
-internal class SpeechFailure(val code: SpeechErrorCode, val userMessage: String) : IOException(code.name)
+internal class SpeechFailure(
+    val code: SpeechErrorCode,
+    val userMessage: String,
+    /** 引擎/服务端的原始失败信息，只进日志，不给用户看。 */
+    val detail: String? = null,
+) : IOException(code.name)
 
 internal fun Throwable.speechFailure(): SpeechFailure = when (this) {
     is SpeechFailure -> this
@@ -85,7 +90,7 @@ internal fun validateSpeechSettings(
             }
         }
     } else when (settings.asr) {
-        AsrProvider.LOCAL, AsrProvider.SHERPA_NCNN, AsrProvider.QWEN3_LOCAL -> Unit // No credentials, URLs or cloud validation.
+        AsrProvider.SYSTEM, AsrProvider.LOCAL, AsrProvider.SHERPA_NCNN, AsrProvider.QWEN3_LOCAL -> Unit // No credentials, URLs or cloud validation.
         AsrProvider.MIMO -> {
             required(secrets.mimoAsr, "MiMo 识别 API Key")
             speechBaseUrl(settings.mimoAsr.baseUrl)

@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="unified_canvas_title">背景畫布</string>
+    <string name="unified_canvas_enable">啟用背景畫布</string>
+    <string name="unified_canvas_enable_summary">靈屏和虛擬屏共用同一執行引擎；保留原有設定與選擇。</string>
+    <string name="unified_canvas_background">自動背景執行</string>
+    <string name="unified_canvas_background_summary">跨應用程式任務優先在背景畫布執行；關閉後仍可明確選擇在背景開啟。</string>
+</resources>

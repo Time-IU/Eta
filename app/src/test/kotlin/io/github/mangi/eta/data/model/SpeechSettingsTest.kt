@@ -34,7 +34,7 @@ class SpeechSettingsTest {
         assertEquals(7, AsrProvider.LOCAL.ordinal)
         assertEquals(5, AsrProvider.SHERPA_NCNN.ordinal)
         assertEquals(6, AsrProvider.QWEN3_LOCAL.ordinal)
-        assertEquals(7, AsrProvider.selectable.size)
+        assertEquals(8, AsrProvider.selectable.size)
         assertFalse(AsrProvider.selectable.contains(AsrProvider.SHERPA_NCNN))
         assertFalse(AsrProvider.selectable.contains(AsrProvider.QWEN3_LOCAL))
         for (provider in AsrProvider.entries) {
@@ -56,7 +56,7 @@ class SpeechSettingsTest {
         assertTrue(config.recognitionEnabled)
         validateSpeechSettings(config, SpeechCredentials(), synthesis = false)
         val legacy = json.decodeFromString<SpeechSettings>(
-            """{"asr":"SYSTEM","tts":"DOUBAO","autoSpeak":true,"refineTranscript":true}""",
+            """{"asr":"FUTURE_UNSUPPORTED","tts":"DOUBAO","autoSpeak":true,"refineTranscript":true}""",
         )
         assertEquals(AsrProvider.LOCAL, legacy.asr)
         assertEquals(TtsProvider.DOUBAO, legacy.tts)
@@ -65,7 +65,7 @@ class SpeechSettingsTest {
     }
 
     @Test fun offlineAppendsOrdinalAndExplicitSavedCloudProvidersAreNotMigrated() {
-        assertEquals(listOf("QWEN_REALTIME", "QWEN_FLASH", "QWEN_FILE", "DOUBAO", "MIMO", "SHERPA_NCNN", "QWEN3_LOCAL", "LOCAL", "DEEPSEEK"),
+        assertEquals(listOf("QWEN_REALTIME", "QWEN_FLASH", "QWEN_FILE", "DOUBAO", "MIMO", "SHERPA_NCNN", "QWEN3_LOCAL", "LOCAL", "DEEPSEEK", "SYSTEM"),
             AsrProvider.entries.map { it.name })
         assertEquals(5, AsrProvider.SHERPA_NCNN.ordinal)
         for (provider in AsrProvider.entries) {
@@ -298,4 +298,22 @@ class SpeechSettingsTest {
                 credentials, true)
         }
     }
+    @Test fun explicitSystemRecognitionAndPlaybackOptionsRoundTripWithoutChangingOfflineDefaults() {
+        val saved = SpeechSettings(asr = AsrProvider.SYSTEM, tts = TtsProvider.SYSTEM,
+            speechRate = 1.5f, speechPitch = 0.75f, speakOnScreenOff = false,
+            chatAutoSpeak = true, autoSendSilenceMs = 1500,
+            mimoTts = MimoTtsConfig(voice = "saved-mimo"),
+            systemTts = SystemTtsConfig(engine = "saved-engine", rate = 1.25f))
+        val restored = json.decodeFromString<SpeechSettings>(json.encodeToString(saved))
+        assertEquals(saved, restored)
+        assertEquals(saved, restored.canonicalized())
+        assertEquals(AsrProvider.SYSTEM, restored.asr)
+        assertEquals(9, AsrProvider.SYSTEM.ordinal)
+        assertTrue(AsrProvider.SYSTEM in AsrProvider.selectable)
+        assertEquals(AsrProvider.LOCAL, SpeechSettings().asr)
+        assertEquals(TtsProvider.NONE, SpeechSettings().tts)
+        assertEquals(2000, SpeechSettings().autoSendSilenceMs)
+        assertEquals("saved-mimo", restored.mimoTts.voice)
+    }
+
 }

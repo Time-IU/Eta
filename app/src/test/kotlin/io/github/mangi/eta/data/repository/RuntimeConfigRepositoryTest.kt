@@ -223,4 +223,27 @@ class RuntimeConfigRepositoryTest {
         assertEquals(ReasoningEffort.LOW, explicitLow.reasoningEffort)
         assertEquals(true, explicitLow.thinkingEnabled)
     }
+    @Test
+    fun legacyAndGranularSubagentSettingsRoundTripTogether() {
+        val json = Json { encodeDefaults = true; ignoreUnknownKeys = true }
+        val legacy = json.decodeFromString<io.github.mangi.eta.data.model.SubagentSettings>(
+            """{"modelId":"saved-internal-model","reasoningEffort":"high","allowedModelIds":["api-model"]}""",
+        )
+        assertEquals("saved-internal-model", legacy.modelId)
+        assertEquals(ReasoningEffort.HIGH, legacy.resolvedReasoningEffort)
+        assertEquals(listOf("api-model"), legacy.effectiveGrants.map { it.modelId })
+        assertEquals(8, legacy.maxParallel)
+        val configured = legacy.copy(maxParallel = 3, maxRounds = 12, failureAbortThreshold = 2,
+            allowModelSelection = true,
+            allowedGrants = listOf(io.github.mangi.eta.data.model.SubagentModelGrant("chosen-api", listOf("low", "high"))),
+            profileDefaults = mapOf("coder" to io.github.mangi.eta.data.model.SubagentProfileDefault("chosen-api", "low")))
+        val restored = json.decodeFromString<io.github.mangi.eta.data.model.SubagentSettings>(
+            json.encodeToString(io.github.mangi.eta.data.model.SubagentSettings.serializer(), configured))
+        assertEquals(configured, restored)
+        assertEquals("saved-internal-model", restored.modelId)
+        assertEquals(listOf("chosen-api"), restored.effectiveGrants.map { it.modelId })
+        assertEquals(listOf("low", "high"), restored.effectiveGrants.single().allowedEfforts)
+        assertEquals("low", restored.profileDefaults.getValue("coder").effort)
+    }
+
 }

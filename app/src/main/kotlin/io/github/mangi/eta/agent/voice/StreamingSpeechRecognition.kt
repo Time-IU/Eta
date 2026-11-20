@@ -26,6 +26,8 @@ internal suspend fun recognizeSpeechStream(
     val automaticEndpoint = endpointSilenceMs > 0
     val sentenceSilenceMs = if (automaticEndpoint) endpointSilenceMs else DEFAULT_SENTENCE_SILENCE_MS
     when (settings.asr) {
+        AsrProvider.SYSTEM ->
+            throw SpeechFailure(SpeechErrorCode.CONFIGURATION, "系统语音服务不支持云端流式识别入口；请使用系统语音录音入口，不会回退到云端")
         AsrProvider.DOUBAO -> recognizeDoubao(settings, credentials, frames, onReady, onPreview, onEndpoint, automaticEndpoint, sentenceSilenceMs)
         AsrProvider.QWEN_REALTIME -> recognizeQwen(settings, credentials, frames, onReady, onPreview, onEndpoint, automaticEndpoint, sentenceSilenceMs)
         AsrProvider.LOCAL, AsrProvider.SHERPA_NCNN, AsrProvider.QWEN3_LOCAL, AsrProvider.MIMO, AsrProvider.QWEN_FLASH, AsrProvider.QWEN_FILE, AsrProvider.DEEPSEEK ->

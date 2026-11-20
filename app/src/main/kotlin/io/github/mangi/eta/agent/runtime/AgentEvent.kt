@@ -54,6 +54,15 @@ internal sealed interface AgentEvent {
         }
     }
 
+    /** 请求侧裁掉了最老轮次：只在本次请求里生效，界面与数据库都不删。 */
+    data class HistoryTrimmed(
+        val omittedMessages: Int,
+        val omittedUserRounds: Int,
+    ) : AgentEvent {
+        override fun toLogLine(): String =
+            "history_trimmed rounds=$omittedUserRounds, messages=$omittedMessages"
+    }
+
     data class RunStarted(
         val initialImages: Int,
         val initialImageBytes: Int,

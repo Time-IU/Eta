@@ -25,6 +25,10 @@ import com.itos.coui.layout.CouiPageDefaults
 import com.itos.coui.layout.Group
 import com.itos.coui.text.CouiTextKind
 import com.itos.coui.text.Text as CouiText
+import io.github.mangi.eta.R
+import io.github.mangi.eta.data.provider.BuiltinProviders
+import io.github.mangi.eta.data.provider.ProviderSourceRegistry
+import io.github.mangi.eta.data.model.ProviderSourceTypes
 import io.github.mangi.eta.data.model.AppearanceUiStyle
 import io.github.mangi.eta.data.model.CustomProviderSetting
 import io.github.mangi.eta.data.model.ProviderSetting
@@ -116,12 +120,27 @@ private fun ProviderBrandImage(
 }
 
 @DrawableRes
-internal fun providerBrandLogoRes(provider: ProviderSetting): Int? =
-    sharedProviderBrandLogoRes(provider)
+internal fun providerBrandLogoRes(provider: ProviderSetting): Int? {
+    // These two built-ins intentionally share the CUSTOM protocol/source. Do
+    // not brand arbitrary user-created gateways as a vendor or local preset.
+    if (provider.isBuiltIn) {
+        when (provider.id) {
+            BuiltinProviders.BREENO_ID -> return R.drawable.provider_logo_breeno_initial
+            BuiltinProviders.LOCAL_ID -> return R.drawable.provider_logo_local_network
+        }
+    }
+    return providerBrandLogoRes(ProviderSourceRegistry.resolve(provider))
+}
 
 @DrawableRes
 internal fun providerBrandLogoRes(sourceType: String): Int? =
-    sharedProviderBrandLogoRes(sourceType)
+    when (ProviderSourceRegistry.normalize(sourceType)) {
+        ProviderSourceTypes.ZHIPU -> R.drawable.model_logo_chatglm
+        ProviderSourceTypes.VOLCENGINE -> R.drawable.model_logo_doubao
+        ProviderSourceTypes.QIANFAN -> R.drawable.provider_logo_qianfan_initials
+        ProviderSourceTypes.HUNYUAN -> R.drawable.model_logo_hunyuan
+        else -> sharedProviderBrandLogoRes(sourceType)
+    }
 
 /** 已知厂商使用品牌图标，未知来源继续按协议类型使用通用图标。 */
 @Composable

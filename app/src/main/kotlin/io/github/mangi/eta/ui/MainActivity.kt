@@ -26,10 +26,18 @@ import io.github.mangi.eta.ui.app.installStartupSplash
 import java.util.Collections
 import java.util.IdentityHashMap
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Dispatchers
+import io.github.mangi.eta.agent.runtime.AgentRuntimeWire
+import io.github.mangi.eta.agent.automation.AutoBackupAlarm
+import io.github.mangi.eta.data.repository.AutoBackupRunner
+import io.github.mangi.eta.hook.vivo.VivoHandoff
 
 class MainActivity : ComponentActivity() {
     private var launchRequests by mutableStateOf(MainActivityLaunchRequests())
     private var appliedPredictiveBackEnabled = true
+    private var assistantConversationSource by mutableStateOf(AgentRuntimeWire.ETA_VOICE_HANDOFF_SOURCE)
+    private var linuxEnvironmentRequested by mutableStateOf(false)
+    private var lastAutoBackupCheckAt = 0L
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -38,6 +46,13 @@ class MainActivity : ComponentActivity() {
         installStartupSplash { contentReady }
         enableEdgeToEdge()
         launchRequests = MainActivityLaunchRequests.restore(savedInstanceState, intent)
+        if (savedInstanceState != null) {
+            assistantConversationSource = savedInstanceState.getString("eta_execution_source")
+                ?: AgentRuntimeWire.ETA_VOICE_HANDOFF_SOURCE
+            linuxEnvironmentRequested = savedInstanceState.getBoolean("eta_open_linux_environment")
+        } else {
+            acceptAdditionalLaunchRequest(intent)
+        }
         lifecycleScope.launch {
             val initialAppearance = AppearanceSettingsRepository.settings()
             appliedPredictiveBackEnabled = initialAppearance.predictiveBackEnabled
@@ -66,6 +81,12 @@ class MainActivity : ComponentActivity() {
                 ) {
                     AgentAppRoot(
                         assistantConversationKey = launchRequests.assistantConversationKey,
+                        assistantConversationSource = assistantConversationSource,
+                        openLinuxEnvironment = linuxEnvironmentRequested,
+                        onLinuxEnvironmentOpened = {
+                            linuxEnvironmentRequested = false
+                            intent?.action = null
+                        },
                         requestedConversationId = launchRequests.conversationId,
                         onRequestedConversationOpened = {
                             launchRequests = launchRequests.copy(conversationId = null)
@@ -94,7 +115,7 @@ class MainActivity : ComponentActivity() {
                         onAssistantConversationOpened = { opened ->
                             launchRequests = launchRequests.copy(assistantConversationKey = null)
                             intent?.action = null
-                            if (opened) {
+                            if (opened && assistantConversationSource == AgentRuntimeWire.ETA_VOICE_HANDOFF_SOURCE) {
                                 EtaAssistantOverlayService.notifyHandoffReady(this@MainActivity)
                             }
                         },
@@ -125,6 +146,7 @@ class MainActivity : ComponentActivity() {
         AndroidAgentLogger.info("Agent UI new intent: task=$taskId launcher=$fromLauncher")
         setIntent(intent)
         launchRequests = launchRequests.accept(intent)
+        acceptAdditionalLaunchRequest(intent)
     }
 
     override fun onDestroy() {
@@ -138,7 +160,51 @@ class MainActivity : ComponentActivity() {
 
     override fun onSaveInstanceState(outState: Bundle) {
         launchRequests.saveTo(outState)
+        outState.putString("eta_execution_source", assistantConversationSource)
+        outState.putBoolean("eta_open_linux_environment", linuxEnvironmentRequested)
         super.onSaveInstanceState(outState)
+    }
+
+    override fun onResume() {
+        super.onResume()
+        val now = System.currentTimeMillis()
+        if (now - lastAutoBackupCheckAt < AUTO_BACKUP_CHECK_INTERVAL_MS) return
+        lastAutoBackupCheckAt = now
+        lifecycleScope.launch(Dispatchers.IO) {
+            runCatching { AutoBackupAlarm.refresh(applicationContext) }
+            runCatching { AutoBackupRunner.maybeRun(applicationContext) }
+        }
+    }
+
+    private fun acceptAdditionalLaunchRequest(request: Intent?) {
+        when (request?.action) {
+            ACTION_OPEN_LINUX_ENVIRONMENT -> linuxEnvironmentRequested = true
+            ACTION_VIEW_EXECUTION -> {
+                assistantConversationSource = request.getStringExtra(EXTRA_EXECUTION_SOURCE)
+                    ?.takeIf { it in setOf(
+                        VivoHandoff.SOURCE, AgentRuntimeWire.ETA_VOICE_HANDOFF_SOURCE,
+                        AgentRuntimeWire.AGENT_UI_HANDOFF_SOURCE, "automation",
+                    ) } ?: AgentRuntimeWire.ETA_VOICE_HANDOFF_SOURCE
+                launchRequests = launchRequests.copy(
+                    assistantConversationKey = request.getStringExtra(
+                        EtaAssistantOverlayService.EXTRA_CONVERSATION_KEY,
+                    )?.takeIf(String::isNotBlank),
+                )
+                request.action = null
+            }
+            EtaAssistantOverlayService.ACTION_OPEN_CONVERSATION -> {
+                assistantConversationSource = AgentRuntimeWire.ETA_VOICE_HANDOFF_SOURCE
+            }
+            ACTION_OPEN_CONVERSATION_ID -> {
+                request.getStringExtra(EXTRA_CONVERSATION_ID)?.takeIf(String::isNotBlank)?.let { id ->
+                    runCatching {
+                        startService(Intent(this, AgentRuntimeService::class.java)
+                            .setAction(AgentRuntimeService.ACTION_MARK_READ)
+                            .putExtra(AgentRuntimeService.EXTRA_MARK_READ_CONVERSATION_ID, id))
+                    }
+                }
+            }
+        }
     }
 
     private fun updateApplicationNightMode(themeMode: AppearanceThemeMode) {
@@ -187,6 +253,10 @@ class MainActivity : ComponentActivity() {
         internal var isInForeground: Boolean = false
             private set
 
+        private const val AUTO_BACKUP_CHECK_INTERVAL_MS = 5 * 60 * 1000L
+        const val ACTION_OPEN_LINUX_ENVIRONMENT = "io.github.mangi.eta.action.OPEN_LINUX_ENVIRONMENT"
+        const val ACTION_VIEW_EXECUTION = "io.github.mangi.eta.action.VIEW_EXECUTION"
+        const val EXTRA_EXECUTION_SOURCE = "io.github.mangi.eta.extra.EXECUTION_SOURCE"
         const val ACTION_OPEN_TERMINAL = "io.github.mangi.eta.action.OPEN_TERMINAL"
         /** 运行浮层的结果卡片回到本体：App 发起的 run 带会话 ID，直接打开该会话。 */
         const val ACTION_OPEN_CONVERSATION_ID = "io.github.mangi.eta.action.OPEN_CONVERSATION_ID"

@@ -1,5 +1,6 @@
 package io.github.mangi.eta.agent.model
 
+import io.github.mangi.eta.agent.runtime.AgentMemoryWorkGate
 import io.github.mangi.eta.agent.runtime.AgentEvent
 import io.github.mangi.eta.agent.runtime.AgentRunController
 import io.github.mangi.eta.agent.runtime.AgentTokenUsage
@@ -30,6 +31,8 @@ internal class AgentLoop(
     private val traceFormatter: AgentTraceFormatter,
     private val onEvent: (AgentEvent) -> Unit,
     private val toolsForRound: (() -> JSONArray)? = null,
+    /** 远端（MCP）工具名：它们的参数 schema 属于第三方服务器，循环只转发不预检。 */
+    private val remoteToolNames: Set<String> = emptySet(),
     private val modelRetry: AgentModelRetry = AgentModelRetry(),
     private val sessionId: String = java.util.UUID.randomUUID().toString(),
     private val transcript: JSONArray = JSONArray(),
@@ -40,6 +43,7 @@ internal class AgentLoop(
     private val purpose: ProviderRequestPurpose = ProviderRequestPurpose.CHAT,
     private val roleplayContext: RoleplayRunContext? = null,
     initialSupplementIndex: Int = 0,
+    private val memoryWorkGate: AgentMemoryWorkGate = AgentMemoryWorkGate(),
 ) {
     data class Result(
         val content: String,
@@ -53,6 +57,7 @@ internal class AgentLoop(
     )
 
     private var availableToolNames = emptySet<String>()
+    private var toolCallValidator = AgentToolCallValidator(localToolsOnly(tools))
     private val accumulatedReasoning = StringBuilder()
     private val thinkingBlockStartMs = mutableMapOf<Pair<Int, Int>, Long>()
     private val sensitiveToolCallIds = linkedSetOf<String>()
@@ -60,8 +65,10 @@ internal class AgentLoop(
     private var pendingToolImageMessage: JSONObject? = null
     private val turnMetrics = TurnMetricsAccumulator()
     private var precedingTools: JSONArray? = null
+    // All retry attempts and both compaction request paths share the same boundary.
+    private val memoryBoundProvider = AgentMemoryBoundProvider(provider, memoryWorkGate)
     private val context = AgentContextSession(
-        config, messages, systemCount, operationId, provider, runController,
+        config, messages, systemCount, operationId, memoryBoundProvider, runController,
         { sensitiveToolCallIds }, onEvent, onContextSnapshot, { transcript.length() },
         roleplay = roleplayContext != null,
         mainToolsProvider = { precedingTools ?: tools },
@@ -71,6 +78,16 @@ internal class AgentLoop(
     )
     private var supplementIndex = initialSupplementIndex
 
+    /**
+     * 每一轮定稿后的用量（每个 assistant 消息对应一轮请求）。
+     *
+     * 工具批次是这一轮响应之后才跑的，所以工具耗时只能在批次结束时再补发一次用量，
+     * 覆盖到同一轮的消息上；这样「模型用时 / 工具调用用时 / TTFT」是同一轮口径，
+     * 不会出现一个按条、一个按整轮累加的对不上。
+     */
+    private val usageByRound = HashMap<Int, AgentTokenUsage>()
+
+    /** 本次 run 的用量累计：面板按「整轮任务」展示，所以各项都要跨请求累加。 */
     fun contextSnapshot(): AgentContextSnapshot? = context.snapshot()
 
     private fun appendMessage(message: JSONObject) {
@@ -87,6 +104,7 @@ internal class AgentLoop(
     }
 
     fun compactOnly(): Result {
+        memoryWorkGate.await(runController)
         context.compact(force = true)
         return Result("", "", emptySet())
     }
@@ -99,7 +117,7 @@ internal class AgentLoop(
         var round = 1
 
         while (true) {
-            runController.throwIfCancelled()
+            memoryWorkGate.await(runController)
             if (purpose.allowsTools) appendPendingSteeringMessage()
 
             // 带签名的工具链沿用发出调用时的请求前缀，工具链完成后再刷新目录。
@@ -114,6 +132,7 @@ internal class AgentLoop(
             availableToolNames = (0 until roundTools.length()).mapNotNullTo(mutableSetOf()) { index ->
                 roundTools.optJSONObject(index)?.optJSONObject("function")?.optString("name")
             }
+            toolCallValidator = AgentToolCallValidator(localToolsOnly(roundTools))
             publishTranscript()
             if (purpose.allowsTools) context.compact()
             val requestMessages = AssistantScreenContextProjection.project(
@@ -127,8 +146,8 @@ internal class AgentLoop(
             val completedRound = try {
                 modelRetry.complete(
                     initialRound = round,
-                    request = ProviderRequest(config, requestMessages, roundTools, sessionId, purpose),
-                    provider = provider,
+                    initialRequest = ProviderRequest(config, requestMessages, roundTools, sessionId, purpose),
+                    provider = memoryBoundProvider,
                     controller = runController,
                     onEvent = { event ->
                         if (event is AgentEvent.RoundStarted) {
@@ -137,7 +156,9 @@ internal class AgentLoop(
                             stepStartedAtMs = monotonicNowMs()
                             firstTokenAtMs = null
                         }
-                        onEvent(event)
+                        if (event is AgentEvent.UsageReceived) {
+                            roundUsage = (roundUsage ?: AgentTokenUsage()).merge(event.usage)
+                        } else onEvent(event)
                     },
                     onProviderEvent = { attemptRound, providerEvent ->
                         if (!purpose.allowsTools && (providerEvent is ProviderEvent.HostedToolStarted ||
@@ -156,7 +177,7 @@ internal class AgentLoop(
                             firstTokenAtMs = monotonicNowMs()
                         }
                         if (providerEvent is ProviderEvent.Usage) {
-                            roundUsage = providerEvent.usage
+                            roundUsage = (roundUsage ?: AgentTokenUsage()).merge(providerEvent.usage)
                             roundInputTokens = providerEvent.contextInputTokens ?: roundInputTokens
                         }
                         if (providerEvent is ProviderEvent.BlockStart &&
@@ -230,11 +251,13 @@ internal class AgentLoop(
                 stepPromptTokens = roundInputTokens,
             )
             if (!accumulatedUsage.isEmpty) {
+                synchronized(usageByRound) { usageByRound[round] = accumulatedUsage }
                 onEvent(AgentEvent.UsageReceived(round = round, usage = accumulatedUsage))
             }
 
             if (toolCalls.isNotEmpty()) {
                 val outcomes = executeToolBatch(round, toolCalls, providerResponse.stopReason)
+                publishToolDuration(round)
                 outcomes.forEach { outcome ->
                     appendMessage(AgentConversationCodec.toolResultMessage(outcome.call, outcome.result))
                 }
@@ -260,7 +283,10 @@ internal class AgentLoop(
             }
 
             publishTranscript()
-            if (purpose.allowsTools) context.compact(final = true)
+            if (purpose.allowsTools) {
+                memoryWorkGate.await(runController)
+                context.compact(final = true)
+            }
             onEvent(AgentEvent.RunFinished(round = round, contentChars = content.length))
             return Result(
                 content = content,
@@ -380,6 +406,20 @@ internal class AgentLoop(
         calls: List<AgentModelClient.ToolCall>,
     ): List<ToolOutcome> {
         runController.throwIfCancelled()
+        val errors = calls.map(toolCallValidator::validate)
+        if (errors.any { it != null }) {
+            val valid = calls.filterIndexed { index, _ -> errors[index] == null }
+            val validResults = when (valid.size) {
+                0 -> emptyList()
+                1 -> listOf(executeTool(round, valid.single()))
+                else -> executeParallelSubagents(round, valid)
+            }.iterator()
+            return calls.mapIndexed { index, call ->
+                val error = errors[index]
+                if (error == null) validResults.next()
+                else rejectedToolOutcome(round, call, "INVALID_TOOL_ARGUMENTS", error)
+            }
+        }
         calls.forEach { toolCall ->
             synchronized(toolBatchLock) {
                 onEvent(
@@ -399,7 +439,7 @@ internal class AgentLoop(
                     async {
                         val toolStartMs = monotonicNowMs()
                         val result = try {
-                            toolExecutor.execute(toolCall)
+                            executeMemoryBoundTool(toolCall)
                         } catch (throwable: Exception) {
                             if (runController.isCancelled) {
                                 AgentModelClient.ToolResult(
@@ -438,11 +478,39 @@ internal class AgentLoop(
         return outcomes
     }
 
+    /** 过滤掉远端工具后的本地工具清单，用于参数预检；远端工具交给服务器自己判。 */
+    private fun localToolsOnly(tools: JSONArray): JSONArray {
+        if (remoteToolNames.isEmpty()) return tools
+        val local = JSONArray()
+        for (index in 0 until tools.length()) {
+            val entry = tools.optJSONObject(index) ?: continue
+            val name = entry.optJSONObject("function")?.optString("name").orEmpty()
+            if (name.isBlank() || name !in remoteToolNames) local.put(entry)
+        }
+        return local
+    }
+
+    private fun executeMemoryBoundTool(call: AgentModelClient.ToolCall): AgentModelClient.ToolResult {
+        val boundary = AgentMemoryWorkGate.boundaryForTool(call.name)
+        while (true) {
+            memoryWorkGate.await(runController, boundary)
+            if (call.name !in setOf("terminal", "terminal_job", "terminal_daemon", "write_file", "edit_file")) {
+                return toolExecutor.execute(call)
+            }
+            // Memory may drop while queued for the tool mutex. Recheck without waiting inside
+            // that mutex; null releases it before the next cancellable memory wait.
+            val result = AgentToolGate.withGate(call.name) {
+                if (memoryWorkGate.isBlocked(boundary)) null else toolExecutor.execute(call)
+            }
+            if (result != null) return result
+        }
+    }
+
     private fun executeTool(
         round: Int,
         toolCall: AgentModelClient.ToolCall,
     ): ToolOutcome {
-        runController.throwIfCancelled()
+        memoryWorkGate.await(runController, AgentMemoryWorkGate.boundaryForTool(toolCall.name))
         if (toolCall.name !in availableToolNames) {
             return rejectedToolOutcome(
                 round = round,
@@ -452,6 +520,18 @@ internal class AgentLoop(
             )
         }
         val roundCall = if (toolCall.round == round) toolCall else toolCall.copy(round = round)
+        // 远端（MCP）工具的参数 schema 属于第三方服务器：这里只转发，不拿本地副本做预检。
+        if (toolCall.name !in remoteToolNames) {
+            toolCallValidator.validate(roundCall)?.let { validationError ->
+                return rejectedToolOutcome(
+                    round = round,
+                    toolCall = roundCall,
+                    code = "INVALID_TOOL_ARGUMENTS",
+                    message = validationError,
+                )
+            }
+        }
+
         onEvent(
             AgentEvent.ToolStarted(
                 round = round,
@@ -464,7 +544,7 @@ internal class AgentLoop(
 
         val toolStartMs = monotonicNowMs()
         val result = try {
-            toolExecutor.execute(roundCall)
+            executeMemoryBoundTool(roundCall)
         } catch (throwable: Exception) {
             runController.throwIfCancelled()
             AgentModelClient.ToolResult(
@@ -576,6 +656,36 @@ internal class AgentLoop(
         }
     }
 
+    /**
+     * 工具批次跑完后，把累计工具耗时补回这一轮的用量上。
+     *
+     * 定稿用量是在响应结束时发的，那时工具还没跑；不补这一次，面板上的「工具调用用时」
+     * 要么没有，要么停在上一轮的数值。
+     */
+    private fun publishToolDuration(round: Int) {
+        val total = turnMetrics.toolTimeMs()
+        val base = synchronized(usageByRound) { usageByRound[round] } ?: return
+        val updated = base.copy(toolMs = total, toolDurationMs = total)
+        synchronized(usageByRound) { usageByRound[round] = updated }
+        onEvent(AgentEvent.UsageReceived(round, updated))
+    }
+
+    /**
+     * 给一次响应的用量补上「上下文构成」估算。
+     *
+     * 只有拿到服务端用量时才做（否则面板没有实测总量可对照）；
+     * 工具目录用 run 开始时发布的那份，避免每轮重建 190KB 的 MCP schema。
+     */
+    private fun AgentTokenUsage.withContextComposition(): AgentTokenUsage {
+        val estimate = AgentContextComposition.estimate(messages, systemCount, tools)
+        if (estimate.isEmpty) return this
+        return copy(
+            systemPromptTokens = estimate.systemPromptTokens,
+            toolDefinitionTokens = estimate.toolDefinitionTokens,
+            conversationTokens = estimate.conversationTokens,
+        )
+    }
+
     private fun ProviderEvent.toAgentEvent(round: Int): AgentEvent? =
         when (this) {
             ProviderEvent.RequestStarted -> AgentEvent.ProviderRequestStarted(round)
@@ -610,7 +720,7 @@ internal class AgentLoop(
                     null
                 },
             )
-            is ProviderEvent.Usage -> AgentEvent.UsageReceived(round = round, usage = usage)
+            is ProviderEvent.Usage -> AgentEvent.UsageReceived(round = round, usage = usage.withContextComposition())
             is ProviderEvent.HostedToolStarted -> AgentEvent.HostedToolStarted(
                 round = round,
                 toolCallId = id,
@@ -691,6 +801,13 @@ internal class AgentLoop(
             stepUsage?.cachedTokens?.let { cachedTokens = (cachedTokens ?: 0) + it }
             stepUsage?.cacheWriteTokens?.let { cacheWriteTokens = (cacheWriteTokens ?: 0) + it }
             return AgentTokenUsage(
+                requestDurationMs = llmMs.takeIf { stepCount > 0 },
+                firstTokenMs = ttftMs.takeIf { ttftSteps > 0 },
+                toolDurationMs = toolMs.takeIf { it > 0L },
+                requestCount = stepCount.takeIf { it > 0 },
+                systemPromptTokens = stepUsage?.systemPromptTokens,
+                toolDefinitionTokens = stepUsage?.toolDefinitionTokens,
+                conversationTokens = stepUsage?.conversationTokens,
                 contextTokens = contextTokens,
                 inputTokens = inputTokens,
                 outputTokens = outputTokens,
@@ -708,6 +825,10 @@ internal class AgentLoop(
             )
         }
 
+        @Synchronized
+        fun toolTimeMs(): Long = toolMs
+
+        @Synchronized
         fun recordToolMs(elapsedMs: Long) {
             toolMs += elapsedMs.coerceAtLeast(0L)
         }

@@ -148,13 +148,13 @@ internal object ProviderRepository {
         mutationMutex.withLock {
             val current = allProviders()
             if (current.isEmpty()) {
-                insertProviders(BuiltinProviders.PROVIDERS.map(::seedOfficialModelsIfEmpty))
+                insertProviders(BuiltinProviders.PROVIDERS.filter { it.id in BuiltinProviders.SEEDED_PROVIDER_IDS }.map(::seedOfficialModelsIfEmpty))
                 SettingsDataStore.setOfficialModelCatalogRevision(OfficialModelCatalog.CURRENT_REVISION)
                 return@withLock
             }
 
             val existingIds = current.mapTo(mutableSetOf()) { it.id }
-            val missing = BuiltinProviders.PROVIDERS.filterNot { it.id in existingIds }
+            val missing = BuiltinProviders.PROVIDERS.filter { it.id in BuiltinProviders.SEEDED_PROVIDER_IDS && it.id !in existingIds }
             if (missing.isNotEmpty()) {
                 val nextOrder = (current.maxOfOrNull { it.sortOrder } ?: -1) + 1
                 insertProviders(missing.mapIndexed { index, provider ->

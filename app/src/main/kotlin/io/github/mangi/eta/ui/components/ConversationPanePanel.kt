@@ -38,6 +38,9 @@ import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.MoreHoriz
 import androidx.compose.material.icons.outlined.PushPin
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
@@ -134,11 +137,32 @@ internal fun ConversationPanePanel(
     onOpenCharacters: () -> Unit,
     onOpenPermissions: () -> Unit,
     modifier: Modifier = Modifier,
+    onNewConversationInCategory: (String?) -> Unit = { _ -> onNewConversation() },
+    onMoveToCategory: (ConversationSummaryUi) -> Unit,
+    onDropConversationToCategory: ((ConversationSummaryUi, String?) -> Unit)? = null,
+    onConversationPin: (ConversationSummaryUi) -> Unit,
+    onBatchDelete: (List<ConversationSummaryUi>) -> Unit,
+    onOpenRootSettings: () -> Unit,
+    onOpenAccessibilitySettings: () -> Unit,
+    onOpenTasks: () -> Unit,
+    onCreateCategory: (String) -> Unit,
+    onRenameCategory: (String, String) -> Unit,
+    onMoveCategory: (String, Int) -> Unit,
+    onDeleteCategoryConfirmed: (String) -> Unit,
 ) {
     // state.conversations 已由 AgentAppState 按标题、预览与消息内容过滤。
     val query = state.searchQuery.trim()
     val isSearching = query.isNotBlank()
-    val groups = remember(state.conversations) { state.conversations.groupForDrawer() }
+    var selectedCategory by remember { mutableStateOf<String?>(null) }
+    var categoryName by remember { mutableStateOf("") }
+    var batchMode by remember { mutableStateOf(false) }
+    var selectedIds by remember { mutableStateOf(emptySet<String>()) }
+    var categoryDeleteRequested by remember { mutableStateOf(false) }
+    val categoryConversations = remember(state.conversations, selectedCategory) {
+        state.conversations.filter { selectedCategory == null ||
+            (selectedCategory == "" && it.categoryId == null) || it.categoryId == selectedCategory }
+    }
+    val groups = remember(categoryConversations) { categoryConversations.groupForDrawer() }
     val containerColor = conversationPaneContainerColor()
     val isCoui = LocalUiStyle.current == AppearanceUiStyle.COUI
     val couiBackdrop = if (isCoui) rememberCouiBackdrop() else null
@@ -185,6 +209,37 @@ internal fun ConversationPanePanel(
                             verticalArrangement = Arrangement.spacedBy(ConversationPanelMetrics.RowGap),
                             overscrollEffect = null,
                         ) {
+                            item(key = "pane_category_controls") {
+                                Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                        EtaChoiceChip("全部", selectedCategory == null, { selectedCategory = null })
+                                        EtaChoiceChip("未分类", selectedCategory == "", { selectedCategory = "" })
+                                        state.categories.forEach { (id, name) ->
+                                            EtaChoiceChip(name, selectedCategory == id, { selectedCategory = id; categoryName = name; categoryDeleteRequested = false })
+                                        }
+                                    }
+                                    BasicTextField(value = categoryName, onValueChange = { categoryName = it },
+                                        textStyle = MiuixTheme.textStyles.body2.copy(color = MiuixTheme.colorScheme.onSurface),
+                                        modifier = Modifier.fillMaxWidth().padding(8.dp),
+                                        decorationBox = { inner -> if (categoryName.isEmpty()) Text("分类名称", style = MiuixTheme.textStyles.body2); inner() })
+                                    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        UiCoreTextButton(text = "新建分类", onClick = { onCreateCategory(categoryName); categoryName = "" })
+                                        UiCoreTextButton(text = "分类内新建", onClick = { onNewConversationInCategory(selectedCategory?.takeIf(String::isNotBlank)) })
+                                        selectedCategory?.takeIf(String::isNotBlank)?.let { id ->
+                                            UiCoreTextButton(text = "重命名", onClick = { onRenameCategory(id, categoryName) })
+                                            UiCoreTextButton(text = "上移", onClick = { onMoveCategory(id, -1) })
+                                            UiCoreTextButton(text = "下移", onClick = { onMoveCategory(id, 1) })
+                                            UiCoreTextButton(text = if (categoryDeleteRequested) "确认解散分类（保留会话）" else "解散分类", onClick = {
+                                                if (categoryDeleteRequested) { onDeleteCategoryConfirmed(id); selectedCategory = null; categoryDeleteRequested = false }
+                                                else categoryDeleteRequested = true
+                                            })
+                                        }
+                                        UiCoreTextButton(text = if (batchMode) "退出多选" else "多选", onClick = { batchMode = !batchMode; selectedIds = emptySet() })
+                                        if (batchMode && selectedIds.isNotEmpty()) UiCoreTextButton(text = "删除所选", onClick = { onBatchDelete(state.conversations.filter { it.id in selectedIds }) })
+                                        UiCoreTextButton(text = "任务", onClick = onOpenTasks)
+                                    }
+                                }
+                            }
                             if (!isSearching) {
                                 item(key = "pane_workbench") {
                                     PaneWorkbenchSection(
@@ -216,12 +271,16 @@ internal fun ConversationPanePanel(
                                     ) { conversation ->
                                         ConversationHistoryRow(
                                             conversation = conversation,
-                                            selected = conversation.id == state.selectedConversationId,
-                                            onClick = { onConversationSelected(conversation.id) },
+                                            selected = if (batchMode) conversation.id in selectedIds else conversation.id == state.selectedConversationId,
+                                            onClick = {
+                                                if (batchMode) selectedIds = if (conversation.id in selectedIds) selectedIds - conversation.id else selectedIds + conversation.id
+                                                else onConversationSelected(conversation.id)
+                                            },
                                             onTogglePin = { onConversationTogglePin(conversation) },
                                             onRename = { onConversationRename(conversation) },
                                             onExport = { onConversationExport(conversation) },
                                             onDelete = { onConversationDelete(conversation) },
+                                            onMoveToCategory = { onMoveToCategory(conversation) },
                                         )
                                     }
                                 }
@@ -571,6 +630,7 @@ private fun ConversationHistoryRow(
     onRename: () -> Unit,
     onExport: () -> Unit,
     onDelete: () -> Unit,
+    onMoveToCategory: () -> Unit = {},
 ) {
     var showActionMenu by remember { mutableStateOf(false) }
     val hapticFeedback = LocalHapticFeedback.current
@@ -714,6 +774,7 @@ private fun ConversationHistoryRow(
                 }
             }
 
+            UiCoreTextButton(text = "分类", onClick = onMoveToCategory)
             if (conversation.isActiveRun) {
                 Box(
                     modifier = Modifier

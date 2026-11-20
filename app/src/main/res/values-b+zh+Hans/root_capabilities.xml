@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?>
+<?xml version='1.0' encoding='utf-8'?>
 <resources>
     <string name="capability_current_device">当前设备</string>
     <string name="capability_all">全部能力</string>
@@ -75,4 +75,13 @@
     <string name="capability_workspace_empty_summary">导入文件，或通过终端任务生成文件</string>
     <string name="capability_workspace_file_export">%1$s · 点按导出</string>
     <string name="settings_tools_list">工具列表</string>
-</resources>
+<string name="capability_kimi_preparing">Kimi Web 准备中…</string>
+    <string name="capability_kimi_open">打开 Kimi Web · 运行中</string>
+    <string name="capability_kimi_retry">Kimi Web 启动失败 · 重试</string>
+    <string name="capability_kimi_stop">停止 Kimi Web</string>
+    <string name="capability_kimi_root_required">当前 Kimi 环境需要 Root，请恢复授权或在 Linux 环境中安装 PRoot 版本</string>
+    <string name="capability_kimi_exited">Kimi Web 进程已退出，请在终端检查 Kimi 配置后重试</string>
+    <string name="capability_kimi_not_installed">请先在 Linux 环境中安装 Kimi Code</string>
+    <string name="capability_kimi_proot_unavailable">PRoot 未能启动，请在 Linux 环境中检查或重新安装普通环境</string>
+    <string name="capability_kimi_logs_unavailable">无法读取 Kimi 启动日志，请在终端检查环境后重试</string>
+    </resources>

@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Original LAN monogram for the built-in local network gateway; not a vendor logo. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="48dp" android:height="48dp"
+    android:viewportWidth="48" android:viewportHeight="48">
+    <path android:fillColor="#475569"
+        android:pathData="M24,0 A24,24 0,1 1,24,48 A24,24 0,1 1,24,0" />
+    <path android:fillColor="#FFFFFF" android:fillType="evenOdd"
+        android:pathData="M7,17 H10 V29 H17 V32 H7 Z M20,17 H29 V32 H26 V27 H23 V32 H20 Z M23,20 V24 H26 V20 Z M32,17 H35 L39,25 V17 H42 V32 H39 L35,24 V32 H32 Z" />
+</vector>

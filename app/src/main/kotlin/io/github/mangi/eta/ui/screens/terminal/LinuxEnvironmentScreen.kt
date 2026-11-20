@@ -1,5 +1,9 @@
 package io.github.mangi.eta.ui.screens.terminal
 
+import io.github.mangi.eta.agent.terminal.LinuxInstallRunner
+import io.github.mangi.eta.agent.terminal.LinuxCapabilityProbe
+import io.github.mangi.eta.agent.terminal.LinuxCapabilityItem
+import androidx.compose.runtime.LaunchedEffect
 import android.content.Context
 import android.text.format.Formatter
 import androidx.annotation.StringRes
@@ -159,6 +163,28 @@ internal fun LinuxEnvironmentScreen(
         mutableStateOf(apkAnalysisInstaller.isReady())
     }
     var apkAnalysisProgress by remember { mutableStateOf<ApkAnalysisInstallProgress?>(null) }
+    val hostedInstall by LinuxInstallRunner.state.collectAsState()
+    var capabilityItems by remember(appContext, selectedDistribution, backend) {
+        mutableStateOf<List<LinuxCapabilityItem>>(emptyList())
+    }
+    var capabilityChecking by remember(appContext, selectedDistribution, backend) { mutableStateOf(true) }
+    LaunchedEffect(appContext, selectedDistribution, backend, status.version, debianStatus.version,
+        apkAnalysisReady, profileReady, hostedInstall == null) {
+        capabilityChecking = true
+        try {
+            capabilityItems = LinuxCapabilityProbe.probe(appContext, selectedDistribution)
+            if (hostedInstall == null) {
+                status = installer.status()
+                debianStatus = debianInstaller.status()
+                apkAnalysisReady = apkAnalysisInstaller.isReady()
+                profileReady = packageProfileUis.associate { it.target to profileInstallers.getValue(it.target).isReady() }
+            }
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            throw cancelled
+        } catch (failure: Exception) {
+            resultMessage = failure.message ?: context.getString(R.string.capability_background_failed)
+        } finally { capabilityChecking = false }
+    }
     val selectedBaseReady = when (selectedDistribution) {
         LinuxDistribution.ALPINE -> status.state != AlpineEnvironmentState.NOT_INSTALLED
         LinuxDistribution.DEBIAN -> debianStatus.state != DebianEnvironmentState.NOT_INSTALLED
@@ -169,43 +195,55 @@ internal fun LinuxEnvironmentScreen(
     }
 
     fun launchInstallation(block: suspend () -> Unit) {
+        if (!LinuxInstallRunner.tryAdopt(context.getString(R.string.linux_installing))) {
+            busyTarget = null
+            resultMessage = "已有安装任务在后台进行"
+            return
+        }
         val operation: suspend () -> Unit = {
             try {
                 block()
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (failure: Exception) {
+                resultMessage = failure.message ?: context.getString(R.string.capability_background_failed)
             } finally {
                 progress = null
                 debianProgress = null
                 profileProgressSummary = null
                 apkAnalysisProgress = null
                 busyTarget = null
+                LinuxInstallRunner.release()
             }
         }
         if (backend == LinuxExecutionBackend.PROOT) {
             requestExecutionNotifications()
-            coroutineScope.launchForegroundExecution(
+            val executionJob = LinuxInstallRunner.scope.launchForegroundExecution(
                 context = appContext,
                 onUnavailable = {
+                    LinuxInstallRunner.release()
                     busyTarget = null
                     resultMessage = context.getString(R.string.capability_background_failed)
                 },
                 block = operation,
             )
+            if (executionJob == null) LinuxInstallRunner.release()
         } else {
-            coroutineScope.launch { operation() }
+            LinuxInstallRunner.scope.launch { operation() }
         }
     }
 
     fun installBase() {
-        if (busyTarget != null || requiresRoot) return
+        if ((busyTarget != null || hostedInstall != null) || requiresRoot) return
         busyTarget = InstallTarget.BASE
         resultMessage = null
         launchInstallation {
             resultMessage = when (selectedDistribution) {
                 LinuxDistribution.ALPINE -> installer.installBase { update ->
-                    withContext(Dispatchers.Main.immediate) { progress = update }
+                    withContext(Dispatchers.Main.immediate) { progress = update; LinuxInstallRunner.updateDetail(update.summary(context)) }
                 }.toMessage(context)
                 LinuxDistribution.DEBIAN -> debianInstaller.installBase { update ->
-                    withContext(Dispatchers.Main.immediate) { debianProgress = update }
+                    withContext(Dispatchers.Main.immediate) { debianProgress = update; LinuxInstallRunner.updateDetail(update.summary(context)) }
                 }.toMessage(context)
             }
             status = installer.status()
@@ -217,16 +255,16 @@ internal fun LinuxEnvironmentScreen(
     }
 
     fun installTools() {
-        if (busyTarget != null || requiresRoot) return
+        if ((busyTarget != null || hostedInstall != null) || requiresRoot) return
         busyTarget = InstallTarget.TOOLS
         resultMessage = null
         launchInstallation {
             resultMessage = when (selectedDistribution) {
                 LinuxDistribution.ALPINE -> installer.installTools { update ->
-                    withContext(Dispatchers.Main.immediate) { progress = update }
+                    withContext(Dispatchers.Main.immediate) { progress = update; LinuxInstallRunner.updateDetail(update.summary(context)) }
                 }.toMessage(context)
                 LinuxDistribution.DEBIAN -> debianInstaller.installTools { update ->
-                    withContext(Dispatchers.Main.immediate) { debianProgress = update }
+                    withContext(Dispatchers.Main.immediate) { debianProgress = update; LinuxInstallRunner.updateDetail(update.summary(context)) }
                 }.toMessage(context)
             }
             status = installer.status()
@@ -248,7 +286,7 @@ internal fun LinuxEnvironmentScreen(
                 LinuxDistribution.ALPINE -> status.version
                 LinuxDistribution.DEBIAN -> debianStatus.version
             }
-            val activeProgress = when (busyTarget) {
+            val activeProgress = hostedInstall?.detail ?: hostedInstall?.title ?: when (busyTarget) {
                 InstallTarget.BASE, InstallTarget.TOOLS -> when (selectedDistribution) {
                     LinuxDistribution.ALPINE -> progress?.summary(context)
                     LinuxDistribution.DEBIAN -> debianProgress?.summary(context)
@@ -262,7 +300,7 @@ internal fun LinuxEnvironmentScreen(
                 mode = backend.displayName(),
                 summary = when {
                     requiresRoot -> stringResource(R.string.capability_linux_root_lost)
-                    busyTarget != null -> activeProgress ?: stringResource(R.string.linux_installing)
+                    (busyTarget != null || hostedInstall != null) -> activeProgress ?: stringResource(R.string.linux_installing)
                     selectedToolsReady -> stringResource(R.string.linux_environment_tools_ready)
                     selectedBaseReady -> stringResource(R.string.linux_environment_base_ready)
                     else -> stringResource(R.string.linux_not_installed) + "\n" + stringResource(
@@ -273,21 +311,24 @@ internal fun LinuxEnvironmentScreen(
                         },
                     )
                 },
-                busy = busyTarget != null,
+                busy = (busyTarget != null || hostedInstall != null),
                 message = resultMessage,
                 actionText = when {
                     requiresRoot -> stringResource(R.string.capability_enhancements)
                     selectedToolsReady -> null
-                    busyTarget != null -> stringResource(R.string.linux_installing)
+                    (busyTarget != null || hostedInstall != null) -> stringResource(R.string.linux_installing)
                     selectedBaseReady -> stringResource(R.string.linux_install_base_tools)
                     else -> stringResource(R.string.linux_install_base)
                 },
-                actionEnabled = busyTarget == null,
+                actionEnabled = (busyTarget == null && hostedInstall == null),
                 onAction = {
                     if (requiresRoot) onNavigate(AppRoute.SystemEnhance)
                     else if (selectedBaseReady) installTools() else installBase()
                 },
             )
+        }
+        item(key = "detected-capabilities") {
+            LinuxCapabilitySection(capabilityItems, capabilityChecking)
         }
         item(key = "configuration-title") {
             if (uiStyle != AppearanceUiStyle.COUI) {
@@ -299,15 +340,15 @@ internal fun LinuxEnvironmentScreen(
                 distribution = selectedDistribution,
                 backend = backend,
                 rootGranted = capabilities.root.isGranted,
-                enabled = busyTarget == null,
+                enabled = (busyTarget == null && hostedInstall == null),
                 onDistributionSelected = { distribution ->
-                    if (busyTarget == null && distribution != selectedDistribution) {
+                    if ((busyTarget == null && hostedInstall == null) && distribution != selectedDistribution) {
                         resultMessage = null
                         coroutineScope.launch { LinuxEnvironmentSettingsRepository.select(distribution) }
                     }
                 },
                 onBackendSelected = { selectedBackend ->
-                    if (busyTarget == null && selectedBackend != backend &&
+                    if ((busyTarget == null && hostedInstall == null) && selectedBackend != backend &&
                         (selectedBackend == LinuxExecutionBackend.PROOT || capabilities.root.isGranted)
                     ) {
                         resultMessage = null
@@ -406,9 +447,9 @@ internal fun LinuxEnvironmentScreen(
                             busyTarget == profileUi.target -> stringResource(R.string.linux_installing)
                             else -> stringResource(R.string.linux_install)
                         }
-                        val primaryEnabled = !requiresRoot && busyTarget == null && !ready
+                        val primaryEnabled = !requiresRoot && (busyTarget == null && hostedInstall == null) && !ready
                         val onPrimaryClick: () -> Unit = {
-                            if (busyTarget == null && !ready) {
+                            if ((busyTarget == null && hostedInstall == null) && !ready) {
                                 busyTarget = profileUi.target
                                 resultMessage = null
                                 val profileTitle = context.getString(profileUi.titleRes)
@@ -417,6 +458,7 @@ internal fun LinuxEnvironmentScreen(
                                     val result = profileInstaller.install { update ->
                                         withContext(Dispatchers.Main.immediate) {
                                             profileProgressSummary = update.summary(context, profileTitle)
+                                            LinuxInstallRunner.updateDetail(profileProgressSummary)
                                         }
                                     }
                                     profileReady = profileReady +
@@ -471,15 +513,16 @@ internal fun LinuxEnvironmentScreen(
                         busyTarget == InstallTarget.APK_ANALYSIS -> context.getString(R.string.linux_installing)
                         else -> context.getString(R.string.linux_install)
                     }
-                    val apkEnabled = busyTarget == null && !requiresRoot && !apkAnalysisReady
+                    val apkEnabled = (busyTarget == null && hostedInstall == null) && !requiresRoot && !apkAnalysisReady
                     val onApkInstall: () -> Unit = {
-                        if (busyTarget == null && !apkAnalysisReady) {
+                        if ((busyTarget == null && hostedInstall == null) && !apkAnalysisReady) {
                             busyTarget = InstallTarget.APK_ANALYSIS
                             resultMessage = null
                             launchInstallation {
                                 val result = apkAnalysisInstaller.install { update ->
                                     withContext(Dispatchers.Main.immediate) {
                                         apkAnalysisProgress = update
+                                        LinuxInstallRunner.updateDetail(update.summary(context))
                                     }
                                 }
                                 apkAnalysisReady = apkAnalysisInstaller.isReady()

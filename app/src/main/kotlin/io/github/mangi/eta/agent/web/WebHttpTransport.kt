@@ -16,9 +16,18 @@ import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import org.json.JSONArray
 import java.util.Locale
 
-internal class WebRequestException(val code: String, message: String, val status: Int? = null) : IOException(message)
+/**
+ * @param attempts 多来源尝试的明细（仅在聚合失败时使用）：每条包含 provider / code / http_status。
+ */
+internal class WebRequestException(
+    val code: String,
+    message: String,
+    val status: Int? = null,
+    val attempts: JSONArray? = null,
+) : IOException(message)
 
 internal data class WebHttpResponse(
     val requestedUrl: String,
@@ -69,7 +78,7 @@ internal class WebHttpTransport(baseClient: OkHttpClient) : Closeable {
         var currentMethod = normalizedMethod
         var currentBody = if (normalizedMethod == "POST") body ?: byteArrayOf() else null
         val visited = hashSetOf<String>()
-        val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(30)
+        val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(DEFAULT_TIMEOUT_SECONDS)
         repeat(MAX_REDIRECTS + 1) { redirectCount ->
             ensureActive()
             if (!visited.add("$currentMethod:${url}")) throw WebRequestException("WEB_REDIRECT_LOOP", "网页重定向形成循环")
@@ -163,6 +172,7 @@ internal class WebHttpTransport(baseClient: OkHttpClient) : Closeable {
 
     companion object {
         const val MAX_RESPONSE_BYTES = 2 * 1024 * 1024
+        private const val DEFAULT_TIMEOUT_SECONDS = 30L
         private const val MAX_REDIRECTS = 5
         private const val DEFAULT_USER_AGENT =
             "Mozilla/5.0 (Linux; Android) AppleWebKit/537.36 (KHTML, like Gecko) Eta/1.0 Mobile Safari/537.36"

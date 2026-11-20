@@ -48,12 +48,12 @@ internal fun rememberChatSearchHistoryPaging(
     before: Int,
     loadState: ConversationHistoryLoadState,
     onLoadEarlier: () -> Unit,
+    includeOutline: Boolean = false,
 ): ChatSearchHistoryPagingState {
     val state = remember { ChatSearchHistoryPagingState() }
     val configuration by rememberUpdatedState(ChatSearchHistoryConfiguration(canLoad, hasEarlier, before, loadState))
     val loadEarlier by rememberUpdatedState(onLoadEarlier)
-    LaunchedEffect(open, query, state.retryVersion) {
-        if (!open || query.isBlank()) return@LaunchedEffect
+    if (open && (includeOutline || query.isNotBlank())) LaunchedEffect(query, includeOutline, state.retryVersion) {
         try {
             while (true) {
                 val ready = snapshotFlow { configuration }.first { current ->
@@ -61,7 +61,7 @@ internal fun rememberChatSearchHistoryPaging(
                         (current.canLoad || !current.hasEarlier)
                 }
                 val decision = chatSearchPagingDecision(
-                    open = open, query = query, canLoad = ready.canLoad,
+                    open = open, query = query, includeOutline = includeOutline, canLoad = ready.canLoad,
                     hasEarlier = ready.hasEarlier, before = ready.before, loadState = ready.loadState,
                     requestedBefore = state.requestedBefore,
                     retry = state.retryVersion != state.handledRetryVersion,

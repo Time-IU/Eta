@@ -1,5 +1,37 @@
 package io.github.mangi.eta.ui.screens.backup
 
+import top.yukonga.miuix.kmp.theme.MiuixTheme
+import top.yukonga.miuix.kmp.preference.SwitchPreference
+import top.yukonga.miuix.kmp.basic.TextField
+import top.yukonga.miuix.kmp.basic.Icon
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.Dispatchers
+import io.github.mangi.eta.ui.components.coui.CouiTextField
+import io.github.mangi.eta.ui.components.coui.CouiSwitchPreference
+import io.github.mangi.eta.data.repository.AutoBackupRunner
+import io.github.mangi.eta.data.repository.AutoBackupResult
+import io.github.mangi.eta.data.model.Settings
+import io.github.mangi.eta.data.model.AutoBackupKeepCount
+import io.github.mangi.eta.data.model.AutoBackupFormat
+import io.github.mangi.eta.data.model.AutoBackupInterval
+import io.github.mangi.eta.data.datastore.SettingsDataStore
+import io.github.mangi.eta.agent.automation.AutoBackupAlarm
+import androidx.compose.material.icons.rounded.Description
+import androidx.compose.material.icons.rounded.Download
+import androidx.compose.material.icons.Icons
+import androidx.compose.ui.platform.LocalWindowInfo
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.Alignment
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Box
 import android.content.Context
 import android.net.Uri
 import android.widget.Toast
@@ -58,6 +90,27 @@ internal fun DataBackupScreen(
     var pendingImportUri by remember { mutableStateOf<Uri?>(null) }
     var showImportDialog by remember { mutableStateOf(false) }
 
+    val settings by SettingsDataStore.settingsFlow().collectAsState(initial = Settings())
+    var autoBusy by remember { mutableStateOf(false) }
+    var autoNote by remember { mutableStateOf<String?>(null) }
+    // 「最近备份」必须以磁盘上的真实文件为准：记录里的文件名可能已被清理掉或换过目录，
+    // 直接显示记录会指向一个根本不存在的文件。
+    var lastBackupName by remember { mutableStateOf("") }
+    LaunchedEffect(settings.autoBackupDirectory, settings.autoBackupLastFileName, settings.autoBackupLastAt) {
+        lastBackupName = withContext(Dispatchers.IO) {
+            AutoBackupRunner.resolveLastBackup(
+                recordedName = settings.autoBackupLastFileName,
+                customDirectory = settings.autoBackupDirectory,
+            )?.name.orEmpty()
+        }
+    }
+    var showDirDialog by remember { mutableStateOf(false) }
+    var dirInput by remember { mutableStateOf("") }
+    var showIntervalDialog by remember { mutableStateOf(false) }
+    var intervalInput by remember { mutableStateOf("") }
+    var showKeepDialog by remember { mutableStateOf(false) }
+    var keepInput by remember { mutableStateOf("") }
+
     fun showFailure(throwable: Throwable) {
         if (throwable is CancellationException) throw throwable
         AndroidAgentLogger.error("Agent backup UI failed: type=${throwable.safeLogType()}\n${throwable.safeStackTrace()}")
@@ -104,6 +157,150 @@ internal fun DataBackupScreen(
         }
     }
 
+    val autoBackupContent: @Composable () -> Unit = {
+
+                BackupSwitchPreference(
+                    title = stringResource(R.string.data_backup_auto_enable),
+                    summary = stringResource(R.string.data_backup_auto_enable_summary),
+                    checked = settings.autoBackupEnabled,
+                    onCheckedChange = { value ->
+                        scope.launch {
+                            try {
+                                SettingsDataStore.updateSettings { it.copy(autoBackupEnabled = value) }
+                                withContext(Dispatchers.IO) {
+                                    if (value) AutoBackupAlarm.refresh(context) else AutoBackupAlarm.cancel(context)
+                                }
+                            } catch (failure: Throwable) { showFailure(failure) }
+                        }
+                    },
+                )
+                BackupDivider()
+                BackupPreference(
+                    title = stringResource(R.string.data_backup_auto_interval),
+                    summary = intervalLabel(context, settings.autoBackupIntervalMinutes),
+                    enabled = settings.autoBackupEnabled,
+                    onClick = {
+                        intervalInput = AutoBackupInterval
+                            .effectiveMinutes(settings.autoBackupIntervalMinutes, settings.autoBackupIntervalHours)
+                            .toString()
+                        showIntervalDialog = true
+                    },
+                )
+                BackupDivider()
+                BackupPreference(
+                    title = stringResource(R.string.data_backup_auto_keep),
+                    summary = stringResource(R.string.data_backup_auto_keep_value, settings.autoBackupKeepCount),
+                    enabled = settings.autoBackupEnabled,
+                    onClick = {
+                        keepInput = settings.autoBackupKeepCount.toString()
+                        showKeepDialog = true
+                    },
+                )
+                BackupDivider()
+                BackupPreference(
+                    title = stringResource(R.string.data_backup_auto_format),
+                    summary = if (AutoBackupFormat.isFull(settings.autoBackupFormat)) {
+                        stringResource(R.string.data_backup_auto_format_full_summary)
+                    } else {
+                        stringResource(R.string.data_backup_auto_format_json_summary)
+                    },
+                    enabled = settings.autoBackupEnabled,
+                    startAction = {
+                        BackupIcon(icon = Icons.Rounded.Description, loading = false)
+                    },
+                    onClick = {
+                        val next = if (AutoBackupFormat.isFull(settings.autoBackupFormat)) {
+                            AutoBackupFormat.JSON
+                        } else {
+                            AutoBackupFormat.FULL
+                        }
+                        scope.launch {
+                            try {
+                            SettingsDataStore.updateSettings { it.copy(autoBackupFormat = next) }
+                            Toast.makeText(
+                                context,
+                                context.getString(
+                                    R.string.data_backup_auto_format_saved,
+                                    if (AutoBackupFormat.isFull(next)) {
+                                        context.getString(R.string.data_backup_auto_format_full)
+                                    } else {
+                                        context.getString(R.string.data_backup_auto_format_json)
+                                    },
+                                ),
+                                Toast.LENGTH_SHORT,
+                            ).show()
+
+                            } catch (failure: Throwable) { showFailure(failure) }
+                        }
+                    },
+                )
+                BackupDivider()
+                BackupPreference(
+                    title = stringResource(R.string.data_backup_auto_run_now),
+                    summary = autoNote ?: when {
+                        settings.autoBackupLastError.isNotBlank() -> stringResource(
+                            R.string.data_backup_auto_error,
+                            settings.autoBackupLastError,
+                        )
+                        lastBackupName.isNotBlank() -> stringResource(R.string.data_backup_auto_last_file, lastBackupName)
+                        else -> stringResource(R.string.data_backup_auto_never)
+                    },
+                    enabled = !autoBusy && !busy,
+                    startAction = {
+                        BackupIcon(icon = Icons.Rounded.Download, loading = autoBusy)
+                    },
+                    onClick = {
+                        if (!autoBusy) {
+                            autoBusy = true
+                            scope.launch {
+                                try {
+                                val result = AutoBackupRunner.maybeRun(context, force = true)
+                                val text = when (result) {
+                                    is AutoBackupResult.Done -> context.getString(
+                                        R.string.data_backup_auto_done,
+                                        result.fileName,
+                                        result.conversationCount,
+                                        result.kept,
+                                    )
+                                    is AutoBackupResult.Failed -> context.getString(
+                                        R.string.data_backup_auto_failed,
+                                        result.message,
+                                    )
+                                    is AutoBackupResult.Skipped -> context.getString(R.string.data_backup_auto_skipped)
+                                }
+                                AutoBackupAlarm.refresh(context)
+                                autoBusy = false
+                                if (result is AutoBackupResult.Done) lastBackupName = result.fileName
+                                autoNote = text
+                                Toast.makeText(context, text, Toast.LENGTH_LONG).show()
+                                } catch (failure: Throwable) {
+                                    showFailure(failure)
+                                } finally {
+                                    autoBusy = false
+                                }
+                            }
+                        }
+                    },
+                )
+                BackupDivider()
+                BackupPreference(
+                    title = stringResource(R.string.data_backup_auto_dir),
+                    summary = AutoBackupRunner.directory(settings.autoBackupDirectory).absolutePath + " · " +
+                        stringResource(
+                            if (settings.autoBackupDirectory.isBlank()) {
+                                R.string.data_backup_dir_default
+                            } else {
+                                R.string.data_backup_dir_custom
+                            },
+                        ),
+                    onClick = {
+                        dirInput = settings.autoBackupDirectory
+                        showDirDialog = true
+                    },
+                )
+
+    }
+
     when (LocalUiStyle.current) {
         AppearanceUiStyle.COUI -> {
             CouiScaffoldPage(
@@ -143,6 +340,7 @@ internal fun DataBackupScreen(
                         },
                     )
                 }
+                Group(title = stringResource(R.string.data_backup_auto)) { autoBackupContent() }
                 CouiPageBottomSpacer()
             }
         }
@@ -198,8 +396,75 @@ internal fun DataBackupScreen(
                         )
                     }
                 }
+                item(key = "auto_backup") {
+                    SmallTitle(stringResource(R.string.data_backup_auto))
+                    Card(modifier = Modifier.padding(horizontal = 12.dp).padding(bottom = 12.dp)) { autoBackupContent() }
+                }
             }
         }
+    }
+
+    if (showDirDialog) {
+        BackupInputDialog(
+            title = stringResource(R.string.data_backup_dir_dialog_title),
+            summary = stringResource(R.string.data_backup_dir_dialog_summary, AutoBackupRunner.defaultDirectory().absolutePath),
+            label = stringResource(R.string.data_backup_dir_dialog_label),
+            value = dirInput, onValueChange = { dirInput = it },
+            onDismiss = { showDirDialog = false },
+            onConfirm = {
+                scope.launch {
+                    try {
+                        SettingsDataStore.updateSettings { it.copy(autoBackupDirectory = dirInput.trim()) }
+                        AutoBackupAlarm.refresh(context)
+                        showDirDialog = false
+                    } catch (failure: Throwable) { showFailure(failure) }
+                }
+            },
+        )
+    }
+    if (showIntervalDialog) {
+        val valid = intervalInput.trim().toIntOrNull()?.let {
+            it in AutoBackupInterval.MIN_MINUTES..AutoBackupInterval.MAX_MINUTES
+        } == true
+        BackupInputDialog(
+            title = stringResource(R.string.data_backup_interval_dialog_title),
+            summary = stringResource(R.string.data_backup_interval_dialog_summary,
+                AutoBackupInterval.MIN_MINUTES, AutoBackupInterval.MAX_MINUTES),
+            label = stringResource(R.string.data_backup_interval_dialog_label),
+            value = intervalInput, onValueChange = { intervalInput = it.filter(Char::isDigit) },
+            confirmEnabled = valid,
+            onDismiss = { showIntervalDialog = false },
+            onConfirm = {
+                val minutes = intervalInput.trim().toIntOrNull()
+                if (minutes != null && valid) scope.launch {
+                    try {
+                        SettingsDataStore.updateSettings { it.copy(autoBackupIntervalMinutes = minutes) }
+                        AutoBackupAlarm.refresh(context)
+                        showIntervalDialog = false
+                    } catch (failure: Throwable) { showFailure(failure) }
+                }
+            },
+        )
+    }
+    if (showKeepDialog) {
+        val valid = keepInput.trim().toIntOrNull()?.let { it in AutoBackupKeepCount.MIN..AutoBackupKeepCount.MAX } == true
+        BackupInputDialog(
+            title = stringResource(R.string.data_backup_keep_dialog_title),
+            summary = stringResource(R.string.data_backup_keep_dialog_summary, AutoBackupKeepCount.MIN, AutoBackupKeepCount.MAX),
+            label = stringResource(R.string.data_backup_keep_dialog_label),
+            value = keepInput, onValueChange = { keepInput = it.filter(Char::isDigit) },
+            confirmEnabled = valid,
+            onDismiss = { showKeepDialog = false },
+            onConfirm = {
+                val count = keepInput.trim().toIntOrNull()
+                if (count != null && valid) scope.launch {
+                    try {
+                        SettingsDataStore.updateSettings { it.copy(autoBackupKeepCount = count) }
+                        showKeepDialog = false
+                    } catch (failure: Throwable) { showFailure(failure) }
+                }
+            },
+        )
     }
 
     if (showImportDialog) {
@@ -279,3 +544,92 @@ internal fun DataBackupScreen(
 
 private fun defaultBackupFileName(): String =
     "Eta-backup-${SimpleDateFormat("yyyyMMdd-HHmm", Locale.US).format(Date())}.eta-backup.json"
+
+@Composable
+private fun BackupIcon(icon: ImageVector, loading: Boolean) {
+    Box(
+        // 与 EtaPreferenceIcon 同宽，正文和分割线起点保持对齐。
+        modifier = Modifier.size(24.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        if (loading) {
+            InfiniteProgressIndicator(size = 20.dp)
+        } else {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                modifier = Modifier.size(24.dp),
+                tint = MiuixTheme.colorScheme.onBackground,
+            )
+        }
+    }
+}
+
+private fun intervalLabel(context: Context, minutes: Int): String =
+    context.getString(R.string.data_backup_auto_interval_value, minutesText(context, minutes))
+
+/** 把分钟数写成「10 分钟 / 2 小时 / 1 天 / 1 小时 30 分钟」。 */
+private fun minutesText(context: Context, minutes: Int): String {
+    val value = AutoBackupInterval.normalize(minutes)
+    return when {
+        value % 1440 == 0 -> context.getString(R.string.data_backup_unit_day, value / 1440)
+        value % 60 == 0 -> context.getString(R.string.data_backup_unit_hour, value / 60)
+        value < 60 -> context.getString(R.string.data_backup_unit_minute, value)
+        else -> context.getString(R.string.data_backup_unit_hour_minute, value / 60, value % 60)
+    }
+}
+
+
+@Composable
+private fun BackupPreference(
+    title: String, summary: String? = null, enabled: Boolean = true,
+    startAction: (@Composable () -> Unit)? = null, onClick: () -> Unit,
+) {
+    if (LocalUiStyle.current == AppearanceUiStyle.COUI) {
+        CouiPreference(title = title, summary = summary, enabled = enabled, icon = startAction, onClick = onClick)
+    } else {
+        ArrowPreference(title = title, summary = summary, enabled = enabled,
+            startAction = { startAction?.invoke() }, onClick = onClick)
+    }
+}
+
+@Composable
+private fun BackupSwitchPreference(title: String, summary: String, checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
+    if (LocalUiStyle.current == AppearanceUiStyle.COUI) {
+        CouiSwitchPreference(title = title, summary = summary, checked = checked, onCheckedChange = onCheckedChange)
+    } else {
+        SwitchPreference(title = title, summary = summary, checked = checked, onCheckedChange = onCheckedChange)
+    }
+}
+
+@Composable
+private fun BackupDivider() {
+    if (LocalUiStyle.current == AppearanceUiStyle.COUI) Divider()
+}
+
+@Composable
+private fun BackupInputDialog(
+    title: String, summary: String, label: String, value: String,
+    onValueChange: (String) -> Unit, confirmEnabled: Boolean = true,
+    onDismiss: () -> Unit, onConfirm: () -> Unit,
+) {
+    if (LocalUiStyle.current == AppearanceUiStyle.COUI) {
+        CouiConfirmDialog(visible = true, title = title, message = summary,
+            confirmText = stringResource(R.string.action_confirm), confirmEnabled = confirmEnabled,
+            onConfirm = onConfirm, onDismissRequest = onDismiss) {
+            CouiTextField(value = value, onValueChange = onValueChange, label = label, singleLine = true)
+        }
+    } else {
+        WindowDialog(show = true, title = title, summary = summary, onDismissRequest = onDismiss) {
+            val maxHeight = with(LocalDensity.current) { LocalWindowInfo.current.containerSize.height.toDp() } * 0.7f
+            Column(modifier = Modifier.fillMaxWidth().heightIn(max = maxHeight)) {
+                Column(modifier = Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState())) {
+                    TextField(value = value, onValueChange = onValueChange, label = label,
+                        singleLine = true, modifier = Modifier.fillMaxWidth())
+                }
+                MiuixDialogActions(confirmText = stringResource(R.string.action_confirm),
+                    confirmEnabled = confirmEnabled, onCancel = onDismiss, onConfirm = onConfirm)
+            }
+        }
+    }
+}

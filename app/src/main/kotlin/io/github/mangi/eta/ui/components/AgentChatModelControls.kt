@@ -26,6 +26,7 @@ internal fun AgentContextUsageButton(
     usage: AgentContextUsageUi,
     onCompact: () -> Unit = {},
     canCompact: Boolean = false,
+    onOpenPanel: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     val progress = usage.progress
@@ -46,11 +47,6 @@ internal fun AgentContextUsageButton(
         noLimitText = stringResource(R.string.context_no_model_limit),
         locale = locale,
     )
-    val detail = when {
-        usage.contextWindow == null -> summary
-        usage.contextTokens == null -> stringResource(R.string.context_usage_after_response)
-        else -> stringResource(R.string.context_usage_previous_response, summary)
-    }
     val usageDescription = stringResource(
         R.string.context_usage_description,
         summary.replace('\n', ' '),
@@ -59,7 +55,7 @@ internal fun AgentContextUsageButton(
 
     Box(modifier = modifier) {
         IconButton(
-            onClick = { showPopover = !showPopover },
+            onClick = { if (onOpenPanel != null) onOpenPanel() else showPopover = !showPopover },
             minWidth = 34.dp,
             minHeight = 34.dp,
         ) {
@@ -77,15 +73,12 @@ internal fun AgentContextUsageButton(
                 },
             )
         }
-        if (showPopover) {
-            ContextUsageStatsPopoverPopup(
-                usage = usage,
-                summaryText = summary,
-                detailText = detail,
-                canCompact = canCompact,
-                onCompact = onCompact,
-                onDismissRequest = { showPopover = false },
-            )
-        }
+        UnifiedUsageSheet(
+            show = showPopover,
+            usage = usage,
+            canCompact = canCompact,
+            onCompact = onCompact,
+            onDismiss = { showPopover = false },
+        )
     }
 }

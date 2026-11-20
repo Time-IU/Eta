@@ -1,5 +1,7 @@
 package io.github.mangi.eta.ui.markdown
 
+import io.github.mangi.eta.ui.components.custom.rememberMessageSentenceBinding
+
 import android.graphics.Typeface
 import android.text.TextPaint
 import androidx.compose.foundation.ScrollState
@@ -373,9 +375,12 @@ internal fun MarkdownDisplayMathBlock(
             .padding(horizontal = 8.dp, vertical = 4.dp),
         contentAlignment = Alignment.Center,
     ) {
+        val mathHit = rememberMessageSentenceBinding(allowDoubleTap = false)
         if (reveal == null) {
             Text(
                 text = annotated,
+                modifier = mathHit.modifier,
+                onTextLayout = mathHit.onTextLayout,
                 style = hostTextStyle,
                 inlineContent = inlineContent,
                 softWrap = false,
@@ -387,8 +392,9 @@ internal fun MarkdownDisplayMathBlock(
                 style = hostTextStyle,
                 inlineContent = inlineContent,
                 softWrap = false,
-                modifier = Modifier.smoothTextReveal(revealState),
+                modifier = mathHit.modifier.smoothTextReveal(revealState),
                 onTextLayout = { layout ->
+                    mathHit.onTextLayout(layout)
                     revealState.onTextLayout(annotated.text, layout, atomicSpans)
                 },
             )
@@ -402,8 +408,9 @@ private fun MarkdownMathFallbackText(
     textStyle: TextStyle,
     reveal: SmoothTextRevealCoordinator?,
 ) {
+    val sentence = rememberMessageSentenceBinding()
     if (reveal == null || block.text.isEmpty()) {
-        Text(text = block.text, style = textStyle, softWrap = false)
+        Text(text = block.text, style = textStyle, softWrap = false, modifier = sentence.modifier, onTextLayout = sentence.onTextLayout)
         return
     }
     val revealState = rememberSmoothTextRevealState(block.revealKey, reveal)
@@ -412,8 +419,11 @@ private fun MarkdownMathFallbackText(
         text = block.text,
         style = animatedStyle,
         softWrap = false,
-        modifier = Modifier.smoothTextReveal(revealState),
-        onTextLayout = { layout -> revealState.onTextLayout(block.text.text, layout) },
+        modifier = sentence.modifier.smoothTextReveal(revealState),
+        onTextLayout = { layout ->
+            sentence.onTextLayout(layout)
+            revealState.onTextLayout(block.text.text, layout)
+        },
     )
 }
 

@@ -1,0 +1,5 @@
+<resources>
+    <string name="surface_help_cpu" formatted="false">Eta CPU usage: one fully used logical core equals 100%; multiple cores can exceed 100%.</string>
+    <string name="surface_help_pss" formatted="false">Eta memory including its proportional share of shared pages. This is the more useful estimate of app memory.</string>
+    <string name="surface_help_rss" formatted="false">Memory pages currently resident for Eta processes. Shared pages may be counted more than once.</string>
+</resources>

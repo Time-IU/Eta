@@ -7,6 +7,7 @@ import io.github.mangi.eta.data.model.CustomHeader
 import io.github.mangi.eta.data.model.CustomProviderSetting
 import io.github.mangi.eta.data.model.GeminiProviderSetting
 import io.github.mangi.eta.data.model.Model
+import io.github.mangi.eta.data.model.OpenAiCompatibleProviderSetting
 import io.github.mangi.eta.data.model.ModelReasoningCapabilities
 import io.github.mangi.eta.data.model.withModels
 import io.github.mangi.eta.data.model.ProviderSetting
@@ -30,11 +31,11 @@ import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
-import org.robolectric.RobolectricTestRunner
+import io.github.mangi.eta.testsupport.EtaRobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
 
-@RunWith(RobolectricTestRunner::class)
+@RunWith(EtaRobolectricTestRunner::class)
 @Config(sdk = [36])
 class GeminiProviderConfigurationTest {
     private val context = RuntimeEnvironment.getApplication()
@@ -136,12 +137,13 @@ class GeminiProviderConfigurationTest {
         ProviderRepository.ensureBuiltInsMerged()
         val providers = ProviderRepository.allProviders()
         assertEquals(source, providers.first())
-        assertTrue(providers.last() is GeminiProviderSetting)
-        assertEquals(BuiltinProviders.GEMINI_ID, providers.last().id)
+        val gemini = providers.single { it.id == BuiltinProviders.GEMINI_ID }
+        assertTrue(gemini is GeminiProviderSetting)
+        assertEquals(BuiltinProviders.GEMINI_ID, gemini.id)
         assertEquals(source.id, SettingsDataStore.settings().selectedProviderId)
         assertEquals(source.models.single().id, SettingsDataStore.settings().selectedModelId)
-        assertEquals(4, providers.last().models.size)
-        assertTrue(providers.last().models.any { it.modelId == "gemini-4-carbon" })
+        assertEquals(4, gemini.models.size)
+        assertTrue(gemini.models.any { it.modelId == "gemini-4-carbon" })
     }
 
     @Test
@@ -177,4 +179,24 @@ class GeminiProviderConfigurationTest {
         assertTrue(requireNotNull(restored).hostedWebSearchEnabled)
         assertFalse(restored.isBuiltIn)
     }
+    @Test
+    fun builtinUpgradeAddsProvidersWithoutDeletingSavedConnectionsOrModels() = runBlocking {
+        val original = OpenAiCompatibleProviderSetting(id = "legacy-built-in", name = "Retained provider",
+            baseUrl = "https://saved.example.invalid/v1", apiKey = "fixture-saved-key", isBuiltIn = true,
+            models = listOf(Model(id = "saved-model", modelId = "saved-api-model", displayName = "Saved model")))
+        val saved = ProviderRepository.addProvider(original)
+        SettingsDataStore.setSelection(saved.id, saved.models.single().id)
+        ProviderRepository.ensureBuiltInsMerged()
+        ProviderRepository.ensureBuiltInsMerged()
+        assertEquals(saved, ProviderRepository.providerById(saved.id))
+        assertEquals(saved.id, SettingsDataStore.settings().selectedProviderId)
+        assertEquals(saved.models.single().id, SettingsDataStore.settings().selectedModelId)
+        val providers = ProviderRepository.allProviders()
+        assertEquals(providers.size, providers.map { it.id }.distinct().size)
+        for (id in BuiltinProviders.SEEDED_PROVIDER_IDS) assertTrue(providers.any { it.id == id })
+        val kimi = requireNotNull(ProviderRepository.providerById(BuiltinProviders.KIMI_ID))
+        assertEquals(io.github.mangi.eta.data.model.ProviderAuthModes.API_KEY, kimi.authMode)
+        assertEquals("https://api.moonshot.cn/v1", kimi.baseUrl)
+    }
+
 }

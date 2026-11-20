@@ -17,6 +17,7 @@ import io.github.mangi.eta.data.model.ProviderSetting
 import io.github.mangi.eta.data.model.ProviderAuthModes
 import io.github.mangi.eta.data.model.ReasoningEffort
 import io.github.mangi.eta.data.model.SubagentSettings
+import io.github.mangi.eta.data.model.enabledModelByApiId
 import io.github.mangi.eta.data.model.enabledModel
 import io.github.mangi.eta.data.model.runtimeProviderType
 import io.github.mangi.eta.data.model.selectedOrFirstModel
@@ -168,19 +169,25 @@ internal object RuntimeConfigRepository {
      */
     suspend fun subagentRuntimeConfig(
         primaryConfig: AgentModelClient.ModelConfig,
+        overrideModelId: String? = null,
+        overrideEffortWire: String? = null,
     ): AgentModelClient.ModelConfig {
         val settings = SettingsDataStore.subagentSettings()
-        val secondaryModelId = settings.modelId?.takeIf { it.isNotBlank() }
+        val secondaryModelId = (overrideModelId ?: settings.modelId)?.takeIf { it.isNotBlank() }
         val resolvedSecondary = if (secondaryModelId != null) {
             ProviderRepository.ensureBuiltInsMerged()
-            ProviderRepository.allProviders().enabledModel(secondaryModelId)
+            val providers = ProviderRepository.allProviders()
+            providers.enabledModel(secondaryModelId)
+                ?: overrideModelId?.let { providers.enabledModelByApiId(it) }
         } else {
             null
         }
         val base = resolvedSecondary?.let { (provider, model) ->
             buildRuntimeConfig(provider, model)
         } ?: primaryConfig
-        val explicitEffort = settings.resolvedReasoningEffort
+        val explicitEffort = if (overrideModelId != null || overrideEffortWire != null) {
+            overrideEffortWire?.let { ReasoningEffort.fromWireValue(it) }
+        } else settings.resolvedReasoningEffort
         val effort = when {
             explicitEffort != null -> {
                 val capabilities = base.reasoningCapabilities
@@ -250,6 +257,24 @@ internal object RuntimeConfigRepository {
         return buildRuntimeConfig(provider, model)
     }
 
+    /**
+     * 入口侧把用户开关并到运行配置上，供自动任务、语音等非界面入口使用。
+     *
+     * [buildRuntimeConfig] 只描述模型与凭据，工具开关取的是 [AgentModelClient.ModelConfig]
+     * 的默认值（终端与敏感读取默认关闭）。Runtime 侧的 AgentRuntimePolicy 只做「与本机
+     * 权限取交集」，无法把默认关闭的开关放大回来，所以入口必须自己带上用户开关。
+     */
+    fun withEntryToolPermissions(
+        config: AgentModelClient.ModelConfig,
+    ): AgentModelClient.ModelConfig = config.copy(
+        terminalTools = Prefs.isEnabled(Prefs.Keys.AGENT_TERMINAL_TOOLS),
+        browserTools = Prefs.isEnabled(Prefs.Keys.AGENT_BROWSER_TOOLS),
+        deviceDirectTools = Prefs.isEnabled(Prefs.Keys.AGENT_DEVICE_DIRECT_TOOLS),
+        deviceSensitiveReadTools = Prefs.isEnabled(Prefs.Keys.AGENT_DEVICE_SENSITIVE_READ_TOOLS),
+        deviceSensitiveActionTools = Prefs.isEnabled(Prefs.Keys.AGENT_DEVICE_SENSITIVE_ACTION_TOOLS),
+        subagentTools = Prefs.isEnabled(Prefs.Keys.AGENT_SUBAGENT_ENABLED),
+    )
+
     /** 会话绑定的模型仍可用时使用它，否则回落到默认模型。 */
     suspend fun runtimeConfigFor(modelId: String?): AgentModelClient.ModelConfig? {
         ProviderRepository.ensureBuiltInsMerged()
@@ -287,6 +312,8 @@ internal object RuntimeConfigRepository {
         json.encodeToString(if (config.authMode == ProviderAuthModes.API_KEY) config else config.copy(apiKey = ""))
 
     fun buildRuntimeConfig(provider: ProviderSetting, model: Model): AgentModelClient.ModelConfig {
+        // 尊重用户清空提示词的选择：留空就是留空，不再回填默认提示词。
+        // 角色卡会话由角色卡提示词接管；运行规则与工具边界在 AgentPromptBuilder 里另行拼接。
         val systemPrompt = provider.systemPrompt.orEmpty().trim()
         val sourceType = ProviderSourceRegistry.resolve(provider)
         val profile = ProviderConnectionProfile.forAuthMode(provider.authMode)

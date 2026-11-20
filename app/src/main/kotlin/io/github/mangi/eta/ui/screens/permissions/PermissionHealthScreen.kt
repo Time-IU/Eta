@@ -2,6 +2,7 @@ package io.github.mangi.eta.ui.screens.permissions
 
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
@@ -20,6 +21,8 @@ import io.github.mangi.eta.ui.components.coui.CouiScaffoldPage
 import io.github.mangi.eta.ui.components.label
 import io.github.mangi.eta.ui.model.PermissionHealthAction
 import io.github.mangi.eta.ui.model.PermissionHealthItemUi
+import io.github.mangi.eta.ui.model.PermissionStatusUi
+import io.github.mangi.eta.ui.navigation.OverlayPermissionNavigation
 import io.github.mangi.eta.ui.model.PermissionHealthUiState
 import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.SmallTitle
@@ -33,6 +36,19 @@ fun PermissionHealthScreen(
     onAction: (PermissionHealthAction) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val context = LocalContext.current
+    val overlayGranted = rememberOverlayPermissionGranted(context)
+    // Grant status comes only from Settings.canDrawOverlays(), never from a successful launch.
+    val items = state.items.map { item ->
+        if (item.id == "overlay") item.copy(
+            status = if (overlayGranted) PermissionStatusUi.Available else PermissionStatusUi.Missing,
+            primaryActionLabel = if (overlayGranted) null else stringResource(R.string.state_ui_to_authorize_762ec4),
+        ) else item
+    }
+    val openItem: (PermissionHealthItemUi) -> Unit = { item ->
+        if (item.id == "overlay") OverlayPermissionNavigation.open(context)
+        else onAction(PermissionHealthAction.OpenItemAction(item.id))
+    }
     when (LocalUiStyle.current) {
         AppearanceUiStyle.COUI -> {
             CouiScaffoldPage(
@@ -41,12 +57,12 @@ fun PermissionHealthScreen(
                 modifier = modifier,
             ) {
                 Group(title = stringResource(R.string.ui_permissions_and_status_35f368)) {
-                    state.items.forEachIndexed { index, item ->
+                    items.forEachIndexed { index, item ->
                         PermissionItemRow(
                             item = item,
-                            onActionClick = { onAction(PermissionHealthAction.OpenItemAction(item.id)) },
+                            onActionClick = { openItem(item) },
                         )
-                        if (index < state.items.lastIndex) {
+                        if (index < items.lastIndex) {
                             Divider()
                         }
                     }
@@ -67,10 +83,10 @@ fun PermissionHealthScreen(
                             .padding(horizontal = 12.dp)
                             .padding(bottom = 12.dp),
                     ) {
-                        state.items.forEach { item ->
+                        items.forEach { item ->
                             PermissionItemRow(
                                 item = item,
-                                onActionClick = { onAction(PermissionHealthAction.OpenItemAction(item.id)) },
+                                onActionClick = { openItem(item) },
                             )
                         }
                     }

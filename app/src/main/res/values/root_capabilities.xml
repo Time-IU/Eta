@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?>
+<?xml version='1.0' encoding='utf-8'?>
 <resources>
     <string name="capability_current_device">Current device</string>
     <string name="capability_all">All capabilities</string>
@@ -76,4 +76,13 @@
     <string name="capability_workspace_empty_summary">Import files or generate them through terminal tasks</string>
     <string name="capability_workspace_file_export">%1$s · Tap to export</string>
     <string name="settings_tools_list">Tool list</string>
-</resources>
+<string name="capability_kimi_preparing">Kimi Web Preparing…</string>
+    <string name="capability_kimi_open">Open Kimi Web · Running</string>
+    <string name="capability_kimi_retry">Kimi Web failed to start · Try again</string>
+    <string name="capability_kimi_stop">Stop Kimi Web</string>
+    <string name="capability_kimi_root_required">The current Kimi environment requires Root, please restore authorization or install the PRoot version in the Linux environment</string>
+    <string name="capability_kimi_exited">Kimi Web process has exited, please check the Kimi configuration in the terminal and try again</string>
+    <string name="capability_kimi_not_installed">Please install Kimi Code in Linux environment first</string>
+    <string name="capability_kimi_proot_unavailable">PRoot failed to start, please check in the Linux environment or reinstall the normal environment</string>
+    <string name="capability_kimi_logs_unavailable">Unable to read Kimi startup log, please check the environment in the terminal and try again</string>
+    </resources>

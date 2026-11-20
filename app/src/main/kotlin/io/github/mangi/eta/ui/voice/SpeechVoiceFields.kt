@@ -16,6 +16,8 @@ import io.github.mangi.eta.ui.components.coui.CouiDropdownPreference
 import top.yukonga.miuix.kmp.basic.DropdownItem
 import top.yukonga.miuix.kmp.preference.OverlaySpinnerPreference
 
+
+/** 播报音色：预设音色或自定义音色 ID。 */
 @Composable
 internal fun SpeechVoiceSection(store: SpeechSettingsStore) {
     val settings = store.settings

@@ -46,3 +46,6 @@ google-services.json
 *.pfx
 .env
 .env.*
+
+# Local backup files
+*.bak

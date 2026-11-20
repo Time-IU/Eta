@@ -1,5 +1,6 @@
 package io.github.mangi.eta.agent.runtime
 
+import io.github.mangi.eta.BuildConfig
 import io.github.mangi.eta.agent.model.AgentContextSnapshot
 import io.github.mangi.eta.agent.model.AssistantScreenContextProjection
 
@@ -96,12 +97,20 @@ internal object AgentRuntimeWire {
     /** service -> client：返回 steering 是否已被当前活跃 run 接纳及分配的补充序号。 */
     const val MSG_STEER_RESPONSE = 19
 
-    private const val MODULE_PACKAGE = "io.github.mangi.eta"
+    const val MSG_PAUSE = 20
+    const val MSG_RESUME = 21
+
+    private val MODULE_PACKAGE = BuildConfig.APPLICATION_ID
     private const val SERVICE_CLASS = "io.github.mangi.eta.agent.runtime.AgentRuntimeService"
 
     private const val KEY_TYPE = "type"
+    private const val KEY_EVENT_VIRTUAL_SCREEN = "virtual_screen"
     private const val KEY_RUN_ID = "run_id"
-    private const val KEY_PROMPT = "prompt"
+    /** 多开时全部活跃 runId 的列表键；KEY_RUN_ID 保留第一个，兼容旧调用方。 */
+    private const val KEY_ACTIVE_RUN_IDS = "active_run_ids"
+    const val KEY_PROMPT: String = "prompt"
+    /** 插话目标会话：带上它表示「只投给这个会话正在跑的 run」；空白＝调用方没有会话信息（旧客户端）。 */
+    const val KEY_CONVERSATION_ID: String = "conversation_id"
     private const val KEY_ASSISTANT_SCREEN_CONTEXT = "assistant_screen_context"
     private const val KEY_MODEL_SESSION_ID = "model_session_id"
     private const val KEY_PROVIDER_ID = "provider_id"
@@ -189,6 +198,13 @@ internal object AgentRuntimeWire {
                     ?.let { AgentUiHandoffPayload.from(it.payload).conversationId }
                     ?.takeIf { it.isNotBlank() } ?: runId
             }
+
+        val virtualScreenOwner: String
+            get() = handoff?.let { entry ->
+                AgentExternalArchivePayload.from(entry.payload)?.let {
+                    AgentExternalArchivePayload.conversationId(entry.source, it.conversationKey)
+                }
+            } ?: effectiveModelSessionId
     }
 
     enum class RunPhase(val wireValue: String) {
@@ -663,6 +679,16 @@ internal object AgentRuntimeWire {
                 handoffSource = item.getString("handoff_source").orEmpty(),
             )
         }
+    /** 多开时在跑的会话不止一个：把全部活跃 runId 一起回给 UI，避免其余会话被误判为中断。 */
+    fun activeRunBundle(runIds: List<String>): Bundle = Bundle().apply {
+        putString(KEY_RUN_ID, runIds.firstOrNull().orEmpty())
+        putStringArrayList(KEY_ACTIVE_RUN_IDS, ArrayList(runIds))
+    }
+
+    fun activeRunIdsFromBundle(bundle: Bundle): List<String> =
+        bundle.getStringArrayList(KEY_ACTIVE_RUN_IDS)
+            ?.filter { runId -> runId.isNotBlank() }
+            .orEmpty()
 
     fun attachRunResponseBundle(runId: String, attached: Boolean): Bundle = Bundle().apply {
         putString(KEY_RUN_ID, runId)
@@ -712,8 +738,13 @@ internal object AgentRuntimeWire {
         }
     }
 
-    /** 将 [AgentEvent] 打包为可跨进程传递的 [Bundle]。 */
-    fun eventToBundle(event: AgentEvent): Bundle = Bundle().apply {
+    /** 旧 Runtime 未携带执行位置时返回 null。 */
+    fun eventVirtualScreenFromBundle(bundle: Bundle): Boolean? =
+        if (bundle.containsKey(KEY_EVENT_VIRTUAL_SCREEN)) bundle.getBoolean(KEY_EVENT_VIRTUAL_SCREEN) else null
+
+    /** 将 [AgentEvent] 和可选的执行位置打包为可跨进程传递的 [Bundle]。 */
+    fun eventToBundle(event: AgentEvent, virtualScreen: Boolean? = null): Bundle = Bundle().apply {
+        virtualScreen?.let { putBoolean(KEY_EVENT_VIRTUAL_SCREEN, it) }
         when (event) {
             is AgentEvent.GuiControlChanged -> {
                 putString(KEY_TYPE, "gui_control_changed")
@@ -731,6 +762,12 @@ internal object AgentRuntimeWire {
                 putString(KEY_TYPE, "round_started")
                 putInt("round", event.round)
                 putInt("message_count", event.messageCount)
+            }
+
+            is AgentEvent.HistoryTrimmed -> {
+                putString(KEY_TYPE, "history_trimmed")
+                putInt("omitted_messages", event.omittedMessages)
+                putInt("omitted_rounds", event.omittedUserRounds)
             }
 
             is AgentEvent.ContextCompaction -> {
@@ -793,6 +830,14 @@ internal object AgentRuntimeWire {
                 putInt("content_chars", event.contentChars)
                 putString("replacement_content", event.replacementContent)
                 event.elapsedMs?.let { putLong("elapsed_ms", it) }
+            }
+
+            is AgentEvent.SearchSuggestions -> {
+                require(SearchSuggestionsPayload.isValidHtml(event.html)) { "SEARCH_SUGGESTIONS_INVALID_PAYLOAD" }
+                putString(KEY_TYPE, "search_suggestions")
+                putInt("round", event.round)
+                putInt("index", event.index)
+                putString("html", event.html)
             }
 
             is AgentEvent.SearchSuggestions -> {
@@ -893,6 +938,11 @@ internal object AgentRuntimeWire {
     fun eventFromBundle(bundle: Bundle): AgentEvent? = when (bundle.getString(KEY_TYPE)) {
         "gui_control_changed" -> GuiControlStatus.fromWireValue(bundle.getString("status").orEmpty())
             ?.let { AgentEvent.GuiControlChanged(it) }
+        "history_trimmed" -> AgentEvent.HistoryTrimmed(
+            omittedMessages = bundle.getInt("omitted_messages"),
+            omittedUserRounds = bundle.getInt("omitted_rounds"),
+        )
+
         "run_started" -> AgentEvent.RunStarted(
             initialImages = bundle.getInt("initial_images"),
             initialImageBytes = bundle.getInt("initial_image_bytes"),
@@ -1066,6 +1116,13 @@ internal object AgentRuntimeWire {
         }
 
     private fun Bundle.putTokenUsage(usage: AgentTokenUsage, prefix: String = "usage_") {
+        usage.requestDurationMs?.let { putLong("${prefix}duration_ms", it) }
+        usage.systemPromptTokens?.let { putInt("${prefix}system_prompt", it) }
+        usage.toolDefinitionTokens?.let { putInt("${prefix}tool_defs", it) }
+        usage.conversationTokens?.let { putInt("${prefix}conversation", it) }
+        usage.firstTokenMs?.let { putLong("${prefix}first_token_ms", it) }
+        usage.toolDurationMs?.let { putLong("${prefix}tool_duration_ms", it) }
+        usage.requestCount?.let { putInt("${prefix}request_count", it) }
         usage.contextTokens?.let { putInt("${prefix}context", it) }
         usage.inputTokens?.let { putInt("${prefix}input", it) }
         usage.outputTokens?.let { putInt("${prefix}output", it) }
@@ -1084,6 +1141,13 @@ internal object AgentRuntimeWire {
 
     private fun Bundle.getTokenUsage(prefix: String = "usage_"): AgentTokenUsage =
         AgentTokenUsage(
+            requestDurationMs = optionalLong("${prefix}duration_ms"),
+            systemPromptTokens = optionalInt("${prefix}system_prompt"),
+            toolDefinitionTokens = optionalInt("${prefix}tool_defs"),
+            conversationTokens = optionalInt("${prefix}conversation"),
+            firstTokenMs = optionalLong("${prefix}first_token_ms"),
+            toolDurationMs = optionalLong("${prefix}tool_duration_ms"),
+            requestCount = optionalInt("${prefix}request_count"),
             contextTokens = optionalInt("${prefix}context"),
             inputTokens = optionalInt("${prefix}input"),
             outputTokens = optionalInt("${prefix}output"),

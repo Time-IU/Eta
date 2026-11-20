@@ -162,6 +162,8 @@ class AgentRuntimeSessionTest {
         session.emit(privateToolDelta)
 
         assertTrue(session.attach(replacementEvents::add, replacementResults::add))
+        // Client 在 ACK 前收集完整快照；UI resetForReplay 后重建，不是对旧正文追加。
+        // 私有工具参数增量仍不能进入重放，新订阅必须恢复已经生成的可见正文。
         assertEquals(listOf(visibleDelta), replacementEvents)
 
         val liveEvent = AgentEvent.ToolFinished(
@@ -181,7 +183,8 @@ class AgentRuntimeSessionTest {
         )
         session.complete(result)
 
-        assertEquals(listOf(visibleDelta, privateToolDelta, liveEvent), firstEvents)
+        // attach 会把旧订阅者置为不再接收：接管之后的事件只投给新订阅者。
+        assertEquals(listOf(visibleDelta, privateToolDelta), firstEvents)
         assertEquals(listOf(visibleDelta, liveEvent), replacementEvents)
         assertEquals(listOf(result), firstResults)
         assertEquals(listOf(result), replacementResults)
@@ -339,4 +342,60 @@ class AgentRuntimeSessionTest {
         assertEquals(1, results.size)
         assertFalse(session.cancel("late"))
     }
+    @Test
+    fun repeatedAttachRebuildsSnapshotExactlyOnceAndTransfersLiveSubscription() {
+        val originalEvents = mutableListOf<AgentEvent>()
+        val originalResults = mutableListOf<AgentRuntimeWire.RunResult>()
+        val session = AgentRuntimeSession("reattach", eventSink = originalEvents::add, resultSink = originalResults::add)
+        val start = AgentEvent.RoundStarted(1, 1)
+        val text = AgentEvent.AssistantBlockDelta(1, AgentEvent.AssistantBlockKind.TEXT, 0, 1, "你")
+        val thinking = text.copy(kind = AgentEvent.AssistantBlockKind.THINKING, index = 1, delta = "思")
+        val privateDelta = text.copy(kind = AgentEvent.AssistantBlockKind.TOOL_CALL, index = 2, delta = "secret")
+        session.emit(start)
+        session.emit(text)
+        session.emit(text.copy(delta = "好"))
+        session.emit(thinking)
+        session.emit(privateDelta)
+        val snapshot = listOf(start, text.copy(deltaChars = 2, delta = "你好"), thinking)
+        val rendered = mutableListOf<AgentEvent>()
+        val firstLive = mutableListOf<AgentEvent>()
+        val secondLive = mutableListOf<AgentEvent>()
+        val attachedResults = mutableListOf<AgentRuntimeWire.RunResult>()
+        var replayCount = 0
+        fun delivery(live: MutableList<AgentEvent>) = AgentRuntimeAttachDelivery(
+            onReplay = { events ->
+                replayCount++
+                // Same replacement contract as restoreRunEvents/resetForReplay.
+                rendered.clear()
+                rendered.addAll(events)
+            },
+            onEvent = { event -> live += event; rendered += event },
+            onAttachResponse = { assertTrue(it) },
+            onResult = attachedResults::add,
+        )
+        val first = delivery(firstLive)
+        assertTrue(session.attach(first::event, first::result) { first.attachResponse(true) })
+        assertEquals(snapshot, rendered)
+        val nextText = text.copy(round = 2, delta = "新")
+        assertTrue(session.emit(nextText))
+        assertEquals(listOf(nextText), firstLive)
+        val second = delivery(secondLive)
+        assertTrue(session.attach(second::event, second::result) { second.attachResponse(true) })
+        assertEquals(2, replayCount)
+        assertEquals(snapshot + nextText, rendered)
+        assertTrue(rendered.none { it is AgentEvent.AssistantBlockDelta && it.kind == AgentEvent.AssistantBlockKind.TOOL_CALL })
+        val live = AgentEvent.RoundStarted(3, 3)
+        assertTrue(session.emit(live))
+        assertEquals(listOf(nextText), firstLive)
+        assertEquals(listOf(live), secondLive)
+        assertEquals(5, originalEvents.size)
+        assertEquals(snapshot + nextText + live, rendered)
+        val result = AgentRuntimeWire.RunResult("reattach", true, "完成")
+        assertTrue(session.complete(result))
+        assertEquals(listOf(result), originalResults)
+        // Superseded ATTACH does not receive another terminal result; original RUN still does.
+        assertEquals(listOf(result), attachedResults)
+        assertFalse(session.attach({}, {}))
+    }
+
 }

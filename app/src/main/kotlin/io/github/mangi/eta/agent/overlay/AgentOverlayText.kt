@@ -16,6 +16,9 @@ internal sealed interface AgentOverlayStatus {
     data object RunFailed : AgentOverlayStatus
     data object GeneratingAnswer : AgentOverlayStatus
     data object Stopping : AgentOverlayStatus
+
+    /** 胶囊常驻但当前没有任务在跑时显示。 */
+    data object Idle : AgentOverlayStatus
     data object Paused : AgentOverlayStatus
     data object Continuing : AgentOverlayStatus
     data object Finishing : AgentOverlayStatus
@@ -42,6 +45,7 @@ internal fun AgentOverlayStatus.localizedText(resources: Resources): String = wh
     AgentOverlayStatus.Finishing -> resources.getString(R.string.overlay_finishing)
     AgentOverlayStatus.ContinuationUnavailable -> resources.getString(R.string.overlay_continuation_unavailable)
     AgentOverlayStatus.Stopped -> resources.getString(R.string.overlay_stopped)
+    AgentOverlayStatus.Idle -> "空闲 · 等待任务"
 }
 
 @Composable
@@ -55,6 +59,7 @@ internal fun toolDisplayName(resources: Resources, name: String): String {
 
 @StringRes
 internal fun toolDisplayNameResource(name: String): Int? = when (name) {
+    "virtual_screen" -> R.string.tool_virtual_screen
     "observe_screen" -> R.string.tool_observe_screen
     "release_gui" -> R.string.tool_release_gui
     "present_to_user" -> R.string.tool_present_to_user
@@ -80,6 +85,7 @@ internal fun toolDisplayNameResource(name: String): Int? = when (name) {
     "open_system_panel" -> R.string.tool_open_system_panel
     "search_apps" -> R.string.tool_search_apps
     "launch_app" -> R.string.tool_launch_app
+    "lingscreen_open_app" -> R.string.tool_lingscreen_open_app
     "open_uri" -> R.string.tool_open_uri
     "browser_use" -> R.string.tool_browser_use
     "web_search" -> R.string.tool_web_search

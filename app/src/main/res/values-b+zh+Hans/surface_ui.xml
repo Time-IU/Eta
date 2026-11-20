@@ -1,0 +1,5 @@
+<resources>
+    <string name="surface_help_cpu" formatted="false">Eta 的 CPU 使用量。占满一个逻辑核心为 100%，多核心合计可超过 100%。</string>
+    <string name="surface_help_pss" formatted="false">Eta 使用的内存，已按比例分摊共享部分，更适合估算应用内存占用。</string>
+    <string name="surface_help_rss" formatted="false">Eta 进程当前驻留在内存中的页面。共享部分可能重复计算，不等于独占内存。</string>
+</resources>

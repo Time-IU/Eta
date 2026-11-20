@@ -1,6 +1,10 @@
 package io.github.mangi.eta.agent.voice
 
 import android.app.Application
+import android.os.Bundle
+import android.speech.SpeechRecognizer
+import org.robolectric.shadows.ShadowSpeechRecognizer
+import java.time.Duration
 import android.os.Looper
 import io.github.mangi.eta.data.model.AsrProvider
 import io.github.mangi.eta.data.model.SpeechCredentials
@@ -16,12 +20,12 @@ import org.junit.Assert.*
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
-import org.robolectric.RobolectricTestRunner
+import io.github.mangi.eta.testsupport.EtaRobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 
-@RunWith(RobolectricTestRunner::class)
+@RunWith(EtaRobolectricTestRunner::class)
 @Config(sdk = [34], application = Application::class)
 class SpeechLifecycleTest {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
@@ -313,6 +317,99 @@ class SpeechLifecycleTest {
             assertEquals(1, holdResults.size)
         } finally {
             dictation.cancel()
+        }
+    }
+
+    private fun startSystem(target: SpeechInputController = controller, automatic: Boolean = false, hold: Boolean = false): ShadowSpeechRecognizer {
+        ShadowSpeechRecognizer.setIsOnDeviceRecognitionAvailable(true)
+        target.start(SpeechSettings(asr = AsrProvider.SYSTEM, autoSendSilenceMs = if (automatic) 2000 else 0),
+            SpeechCredentials(), holdToTalk = hold)
+        shadowOf(Looper.getMainLooper()).idle()
+        return shadowOf(ShadowSpeechRecognizer.getLatestSpeechRecognizer()).also {
+            it.triggerSupportError(SpeechRecognizer.ERROR_CANNOT_CHECK_SUPPORT)
+            shadowOf(Looper.getMainLooper()).idle()
+            it.triggerOnReadyForSpeech(Bundle())
+        }
+    }
+
+    private fun systemText(value: String) = Bundle().apply {
+        putStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION, arrayListOf(value))
+    }
+
+    @Test fun dictationWaitsForUserEvenWhenSystemReturnsEarly() {
+        startSystem().triggerOnResults(systemText("可编辑的草稿"))
+        assertTrue(results.isEmpty())
+        assertEquals("可编辑的草稿", controller.state.value.preview)
+        controller.finish()
+        controller.finish()
+        assertEquals(listOf("可编辑的草稿"), results)
+        assertFalse(controller.state.value.active)
+    }
+
+    @Test fun closingOwnerReleasesRecognitionAndTimeouts() {
+        val recognizer = startSystem()
+        controller.cancel()
+        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofSeconds(61))
+        recognizer.triggerOnResults(systemText("迟到"))
+        assertTrue(recognizer.isDestroyed)
+        assertTrue(results.isEmpty())
+        assertNull(controller.state.value.error)
+    }
+
+    @Test fun ownerCancellationReleasesSystemRecognizer() {
+        val recognizer = startSystem()
+        scope.cancel()
+        shadowOf(Looper.getMainLooper()).idle()
+        assertTrue(recognizer.isDestroyed)
+        assertFalse(controller.state.value.active)
+    }
+
+    @Test fun systemCanceledSessionCannotSubmitOrReplaceNewPreview() {
+        val old = startSystem()
+        controller.cancel()
+        val current = startSystem()
+        old.triggerOnResults(systemText("旧结果"))
+        current.triggerOnPartialResults(systemText("新草稿"))
+        assertEquals("新草稿", controller.state.value.preview)
+        controller.finish()
+        current.triggerOnResults(systemText("新结果"))
+        assertEquals(listOf("新结果"), results)
+    }
+
+    @Test fun systemDisablingAnActiveSessionDiscardsLateRecognitionResults() {
+        val recognizer = startSystem()
+        controller.start(SpeechSettings(asr = AsrProvider.SYSTEM, recognitionEnabled = false))
+        shadowOf(Looper.getMainLooper()).idle()
+        recognizer.triggerOnResults(systemText("迟到的旧识别"))
+        assertTrue(recognizer.isDestroyed)
+        assertFalse(controller.state.value.active)
+        assertTrue(results.isEmpty())
+    }
+
+    @Test fun anotherAudioOwnerInterruptsSystemRecognition() {
+        val recognizer = startSystem()
+        val lease = SpeechAudioLease(RuntimeEnvironment.getApplication()) {}
+        try {
+            lease.acquire(playback = false)
+            assertTrue(recognizer.isDestroyed)
+            assertFalse(controller.state.value.active)
+        } finally { lease.close() }
+    }
+
+    @Test fun systemOverlayHonorsAutomaticEndpointAndHoldToTalkBypass() {
+        for ((automatic, hold) in listOf(true to false, false to false, true to true)) {
+            results.clear()
+            val overlay = createController(automaticEndpoint = true)
+            try {
+                startSystem(overlay, automatic, hold).triggerOnResults(systemText("系统识别"))
+                assertEquals(if (automatic && !hold) listOf("系统识别") else emptyList<String>(), results)
+                if (!automatic || hold) {
+                    assertEquals("系统识别", overlay.state.value.preview)
+                    overlay.finish()
+                    assertEquals(listOf("系统识别"), results)
+                }
+                assertFalse(overlay.state.value.active)
+            } finally { overlay.cancel() }
         }
     }
 

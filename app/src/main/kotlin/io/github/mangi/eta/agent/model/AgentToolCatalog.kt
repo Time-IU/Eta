@@ -21,7 +21,11 @@ internal object AgentToolCatalog {
         disabledTools: Set<String> = emptySet(),
     ): JSONArray =
         capabilities.project(JSONArray().also { tools ->
-            AgentContextAppToolCatalog.appendTo(tools)
+            // 工具档只剩「正常」与「纯聊天」：纯聊天在 AgentToolDirectory 里已直接返回空数组，
+            // 走到这里的都是正常档，全部工具原样声明，不再按档位删减。
+            AgentContextAppToolCatalog.appendTo(tools, includeOwnedScreen = deviceDirectTools)
+            // 主动提问：模型自己需要用户拍板时用，和系统拦截共用同一张卡。
+            AgentAskToolCatalog.appendTo(tools)
             AgentGestureToolCatalog.appendTo(tools)
             AgentTextSystemToolCatalog.appendTo(tools)
             AgentDeviceToolCatalog.appendTo(
@@ -38,8 +42,11 @@ internal object AgentToolCatalog {
                 tools,
                 githubDiscovery = skillGitHubDiscovery,
                 githubInstall = skillGitHubInstall,
+                authoring = memoryWritable,
             )
             if (memoryTools) AgentMemoryToolCatalog.appendTo(tools, writable = memoryWritable)
+            if (memoryWritable) AgentTaskToolCatalog.appendTo(tools)
+            if (deviceDirectTools) AgentVirtualScreenToolCatalog.appendTo(tools)
             if (terminalTools) {
                 AgentFileVisionToolCatalog.appendTo(tools)
                 AgentTerminalToolCatalog.appendTo(tools)

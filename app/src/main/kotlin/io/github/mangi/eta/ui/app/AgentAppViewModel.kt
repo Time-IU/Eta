@@ -18,4 +18,10 @@ internal class AgentAppViewModel(application: Application) : AndroidViewModel(ap
     private val terminalHost = TerminalSessionHost.get(application)
     val terminalStore = terminalHost.terminal
     val consoleStore = terminalHost.console
+    init { ApprovalChatDecisionBridge.attach(state) }
+    override fun onCleared() {
+        ApprovalChatDecisionBridge.detach(state)
+        super.onCleared()
+    }
+
 }

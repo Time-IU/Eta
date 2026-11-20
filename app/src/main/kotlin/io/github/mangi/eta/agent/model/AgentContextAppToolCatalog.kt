@@ -5,7 +5,7 @@ import org.json.JSONObject
 
 /** 上下文、应用入口与屏幕观察工具 schema。 */
 internal object AgentContextAppToolCatalog {
-    fun appendTo(tools: JSONArray) {
+    fun appendTo(tools: JSONArray, includeOwnedScreen: Boolean = true) {
         tools
             .put(
                 AgentToolSchema.function(
@@ -165,5 +165,27 @@ internal object AgentContextAppToolCatalog {
                         .put("additionalProperties", false),
                 )
             )
+        if (includeOwnedScreen) appendOwnedScreenEntry(tools)
+    }
+
+    private fun appendOwnedScreenEntry(tools: JSONArray) {
+        val properties = JSONObject()
+            .put("package_name", JSONObject().put("type", "string").put("description", "精确 Android 包名"))
+            .put("app_name", JSONObject().put("type", "string").put("description", "已安装应用显示名"))
+        fun variant(required: String): JSONObject = JSONObject()
+            .put("type", "object")
+            .put("properties", JSONObject(properties.toString()))
+            .put("required", JSONArray().put(required))
+            .put("additionalProperties", false)
+        tools.put(
+            AgentToolSchema.function(
+                name = "lingscreen_open_app",
+                description = "launch_app(display=virtual) 的兼容别名：在统一后台画布打开应用，和 virtual_screen 共用唯一引擎/会话，并让后续观察、点击和输入保持在该 owner 的画布；需要已授权 Root 或已启用的系统 Hook、设备直连工具和后台画布开关；Hook 输入仍需真实无障碍权限。提供 package_name 或 app_name，歧义时返回候选，不会停止或重启其他画布的应用，除非已取得相应许可。普通主屏/auto 启动仍用 launch_app。",
+                parameters = JSONObject().put("type", "object")
+                    .put("properties", properties)
+                    .put("anyOf", JSONArray().put(variant("package_name")).put(variant("app_name")))
+                    .put("additionalProperties", false),
+            ),
+        )
     }
 }

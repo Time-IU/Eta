@@ -1,6 +1,7 @@
 package io.github.mangi.eta.ui.components
 
 import io.github.mangi.eta.ui.components.custom.CustomMessageActionsHost
+import io.github.mangi.eta.ui.components.custom.rememberMessageSentenceBinding
 import io.github.mangi.eta.ui.components.custom.CustomMessageSelection
 import io.github.mangi.eta.ui.components.custom.LocalCustomMessageActionSlots
 import android.graphics.BitmapFactory
@@ -46,6 +47,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.AccountTree
 import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.automirrored.rounded.CallSplit
 import androidx.compose.material.icons.rounded.Check
@@ -53,10 +55,12 @@ import androidx.compose.material.icons.rounded.ChevronLeft
 import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.material.icons.rounded.Compress
 import androidx.compose.material.icons.rounded.ContentCopy
+import androidx.compose.material.icons.rounded.Terminal
 import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.Lightbulb
 import androidx.compose.material.icons.rounded.Refresh
+import androidx.compose.material.icons.rounded.TextFields
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -65,6 +69,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -103,11 +108,13 @@ import com.itos.coui.shape.CouiShape
 import com.itos.coui.theme.CouiTheme
 import io.github.mangi.eta.R
 import io.github.mangi.eta.agent.model.AgentFileReferencePromptCodec
+import io.github.mangi.eta.agent.model.AgentSkillCommandPromptCodec
 import io.github.mangi.eta.agent.overlay.toolDisplayName
 import io.github.mangi.eta.data.model.AppearanceUiStyle
 import io.github.mangi.eta.ui.app.LocalUiStyle
 import io.github.mangi.eta.ui.markdown.EditorialLineHeightStyle
 import io.github.mangi.eta.ui.markdown.MarkdownTone
+import io.github.mangi.eta.ui.voice.LocalSpeechPlaybackProgress
 import io.github.mangi.eta.ui.markdown.StaticMarkdown
 import io.github.mangi.eta.ui.markdown.StreamingMarkdown
 import io.github.mangi.eta.ui.markdown.StreamingMarkdownState
@@ -138,17 +145,27 @@ private val chatImageBitmapCache = object : LruCache<String, ImageBitmap>(48 * 1
 }
 
 @Composable
-internal fun rememberDataUrlBitmap(dataUrl: String): ImageBitmap? = remember(dataUrl) {
-    chatImageBitmapCache.get(dataUrl)
-        ?: decodeDataUrlBitmap(dataUrl)?.also { chatImageBitmapCache.put(dataUrl, it) }
+internal fun rememberDataUrlBitmap(dataUrl: String, maxPx: Int? = null): ImageBitmap? = remember(dataUrl, maxPx) {
+    chatImageBitmapCache.get(dataUrl + ":" + maxPx)
+        ?: decodeDataUrlBitmap(dataUrl, maxPx)?.also { chatImageBitmapCache.put(dataUrl + ":" + maxPx, it) }
 }
 
-internal fun decodeDataUrlBitmap(dataUrl: String): ImageBitmap? {
+internal fun decodeDataUrlBitmap(dataUrl: String, maxPx: Int? = null): ImageBitmap? {
     val base64 = dataUrl.substringAfter("base64,", "")
     if (base64.isBlank()) return null
     return runCatching {
         val bytes = Base64.decode(base64, Base64.NO_WRAP)
-        BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap()
+        if (maxPx == null) {
+            BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap()
+        } else {
+            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+            var sample = 1
+            val longest = maxOf(bounds.outWidth, bounds.outHeight)
+            while (longest > 0 && longest / (sample * 2) >= maxPx) sample *= 2
+            val opts = BitmapFactory.Options().apply { inSampleSize = sample }
+            BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opts)?.asImageBitmap()
+        }
     }.getOrNull()
 }
 
@@ -228,6 +245,8 @@ internal fun ChatMessageItem(
     onRegenerateMessage: (String) -> Unit = {},
     onBranchMessage: (String) -> Unit = {},
     onSelectReplyCandidate: (String, Int) -> Unit = { _, _ -> },
+    /** 非空时才在卡片末尾出现「新建分支」；工作过程里的中间条目传 null。 */
+    onForkMessage: ((String) -> Unit)? = null,
 ) {
     when (message) {
         is UserMessageUi -> CustomMessageActionsHost(
@@ -280,7 +299,7 @@ internal fun ChatMessageItem(
                 modifier = modifier,
             )
         }
-        is SystemNoticeMessageUi -> if (message.code == SystemNoticeCode.ContextCompaction) {
+        is SystemNoticeMessageUi -> if (message.code == SystemNoticeCode.ContextCompaction || message.code == SystemNoticeCode.CommandNote) {
             ContextCompactionMarker(message = message, modifier = modifier)
         } else {
             AgentMessageBlock(
@@ -296,6 +315,7 @@ internal fun ChatMessageItem(
                                     SystemNoticeCode.ModelRetry -> R.string.system_notice_model_retry
                                     SystemNoticeCode.RuntimeFailed -> R.string.system_notice_runtime_failed
                                     SystemNoticeCode.Interrupted -> R.string.system_notice_interrupted
+                                    SystemNoticeCode.CommandNote -> R.string.system_notice_command_note
                                 },
                             ),
                         )
@@ -424,8 +444,11 @@ private fun UserMessageBubble(
                         CustomMessageSelection(selectionMode, onCopiedSelection) {
                             // Column preserves normal body flow; SelectionContainer's Box never overlays rows.
                             Column {
+                                val sentence = rememberMessageSentenceBinding()
                                 Text(
                                     text = visiblePrompt.request,
+                                    modifier = sentence.modifier,
+                                    onTextLayout = sentence.onTextLayout,
                                     style = MiuixTheme.textStyles.body1.copy(lineHeight = 23.sp, lineHeightStyle = EditorialLineHeightStyle),
                                     color = MiuixTheme.colorScheme.onSurface,
                                 )
@@ -455,6 +478,7 @@ private fun UserMessageBubble(
                 }
             }
         }
+
     }
 }
 
@@ -753,7 +777,11 @@ private fun ContextCompactionMarker(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Icon(
-                imageVector = Icons.Rounded.Compress,
+                imageVector = if (message.code == SystemNoticeCode.CommandNote) {
+                    Icons.Rounded.Terminal
+                } else {
+                    Icons.Rounded.Compress
+                },
                 contentDescription = null,
                 modifier = Modifier
                     .size(12.dp)
@@ -803,7 +831,11 @@ private fun AgentMessageBlock(
     @Suppress("DEPRECATION")
     val clipboardManager = LocalClipboardManager.current
     val haptic = LocalHapticFeedback.current
+    // 只有正在朗读的这条消息才进入高亮分支，其余消息不产生额外重组。
+    val speechProgress = LocalSpeechPlaybackProgress.current.value
+    val speechHighlight = speechProgress.highlight.takeIf { speechProgress.messageId == message.id }
     var copied by remember(message.id) { mutableStateOf(false) }
+    var showSelectionCopy by remember(message.id) { mutableStateOf(false) }
     val keepStreamingMarkdown = remember(message.id) { message.isStreaming }
     DisposableEffect(retainedStreamingState) {
         retainedStreamingState?.attachContent()
@@ -878,14 +910,18 @@ private fun AgentMessageBlock(
                         content = message.content,
                         tone = MarkdownTone.Answer,
                         parsed = completedDocument,
+                        highlight = speechHighlight,
                         modifier = Modifier.fillMaxWidth(),
                     )
                 }
             }
             message.content.isNotBlank() -> {
                 CustomMessageSelection(selectionMode, onCopiedSelection) {
+                    val sentence = rememberMessageSentenceBinding()
                     Text(
                         text = message.content,
+                        modifier = sentence.modifier,
+                        onTextLayout = sentence.onTextLayout,
                         style = MiuixTheme.textStyles.body1.copy(
                             lineHeight = 25.sp,
                             lineHeightStyle = EditorialLineHeightStyle,
@@ -896,6 +932,12 @@ private fun AgentMessageBlock(
             }
         }
 
+        if (showSelectionCopy) {
+            SelectionCopyDialog(
+                text = message.content,
+                onDismiss = { showSelectionCopy = false },
+            )
+        }
         message.searchSuggestionsHtml.forEach { html ->
             SearchSuggestionsView(html = html, modifier = Modifier.padding(top = 8.dp))
         }

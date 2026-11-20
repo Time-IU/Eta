@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="personal_source_scope">Personal branch; local test changes may not be published yet.</string>
+    <string name="personal_source_notices">View source and third-party notices</string>
+</resources>

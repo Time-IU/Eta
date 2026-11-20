@@ -21,7 +21,8 @@ import java.util.concurrent.atomic.AtomicReference
  */
 internal class AgentRuntimeClient(
     private val context: Context,
-    private val logger: AgentLogger
+    private val logger: AgentLogger,
+    private val onExecutionTarget: (Boolean) -> Unit = {},
 ) {
     sealed interface AttachOutcome {
         data class Completed(val result: AgentRuntimeWire.RunResult) : AttachOutcome
@@ -36,7 +37,10 @@ internal class AgentRuntimeClient(
     }
 
     sealed interface ActiveRunQuery {
-        data class Known(val runId: String?) : ActiveRunQuery
+        data class Known(
+            val runId: String?,
+            val runIds: Set<String> = emptySet(),
+        ) : ActiveRunQuery
         data object Unavailable : ActiveRunQuery
     }
 
@@ -62,6 +66,7 @@ internal class AgentRuntimeClient(
         val clientMessenger = Messenger(
             ClientHandler(
                 onEvent = onEvent,
+                onExecutionTarget = onExecutionTarget,
                 onResult = { result ->
                     resultRef.set(result)
                     resultLatch.countDown()
@@ -131,6 +136,31 @@ internal class AgentRuntimeClient(
             msg.data = AgentRuntimeWire.ackBundle(runId)
             serviceMessenger.send(msg)
         }
+    }
+
+    fun pauseRun(runId: String = "") = setRunPaused(runId, true)
+    fun resumeRun(runId: String = "") = setRunPaused(runId, false)
+    private fun setRunPaused(runId: String, paused: Boolean) {
+        withRuntimeMessenger(Unit) { messenger ->
+            val message = Message.obtain(null, if (paused) AgentRuntimeWire.MSG_PAUSE else AgentRuntimeWire.MSG_RESUME)
+            message.data = AgentRuntimeWire.ackBundle(runId)
+            messenger.send(message)
+        }
+    }
+
+    /** 无明确运行标识的旧入口只允许唯一候选，不猜测当前会话。 */
+    fun steerRun(text: String): SteerOutcome = steerConversation(text)
+
+    /** 对话入口必须显式使用此 API；与 steerRun(runId, text) 的两 String 顺序不能混用。 */
+    fun steerConversation(text: String, conversationId: String = ""): SteerOutcome {
+        if (text.isBlank()) return SteerOutcome.Rejected
+        val active = when (val query = queryActiveRuns()) {
+            is ActiveRunsQuery.Known -> query.runs
+            ActiveRunsQuery.Unavailable -> return SteerOutcome.Unavailable
+        }
+        val target = if (conversationId.isBlank()) active.singleOrNull()
+            else active.singleOrNull { it.conversationId == conversationId }
+        return target?.let { steerRun(it.runId, text) } ?: SteerOutcome.Rejected
     }
 
     fun steerRun(runId: String, text: String): SteerOutcome {
@@ -250,9 +280,11 @@ internal class AgentRuntimeClient(
     fun queryActiveRun(): ActiveRunQuery {
         val responseLatch = CountDownLatch(1)
         val runIdRef = AtomicReference("")
+        val runIdsRef = AtomicReference<List<String>>(emptyList())
         val clientMessenger = Messenger(
-            ActiveRunHandler { runId ->
+            ActiveRunHandler { runId, runIds ->
                 runIdRef.set(runId)
+                runIdsRef.set(runIds)
                 responseLatch.countDown()
             }
         )
@@ -264,7 +296,10 @@ internal class AgentRuntimeClient(
             if (!responseLatch.await(RESPONSE_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
                 ActiveRunQuery.Unavailable
             } else {
-                ActiveRunQuery.Known(runIdRef.get().takeIf(String::isNotBlank))
+                val ids = runIdsRef.get().ifEmpty {
+                    listOfNotNull(runIdRef.get().takeIf(String::isNotBlank))
+                }
+                ActiveRunQuery.Known(ids.firstOrNull(), ids.toSet())
             }
         }
     }
@@ -373,11 +408,15 @@ internal class AgentRuntimeClient(
         private val onEvent: (AgentEvent) -> Unit,
         private val onResult: (Bundle) -> Unit,
         private val onRequestIngested: () -> Unit,
+        private val onExecutionTarget: (Boolean) -> Unit = {},
     ) : Handler(Looper.getMainLooper()) {
         override fun handleMessage(msg: Message) {
             when (msg.what) {
                 AgentRuntimeWire.MSG_EVENT -> {
-                    AgentRuntimeWire.eventFromBundle(msg.data ?: return)?.let(onEvent)
+                    val bundle = msg.data ?: return
+                    val event = AgentRuntimeWire.eventFromBundle(bundle) ?: return
+                    AgentRuntimeWire.eventVirtualScreenFromBundle(bundle)?.let(onExecutionTarget)
+                    onEvent(event)
                 }
 
                 AgentRuntimeWire.MSG_RESULT -> {
@@ -400,11 +439,15 @@ internal class AgentRuntimeClient(
     }
 
     private class ActiveRunHandler(
-        private val onResponse: (String) -> Unit,
+        private val onResponse: (String, List<String>) -> Unit,
     ) : Handler(Looper.getMainLooper()) {
         override fun handleMessage(msg: Message) {
             if (msg.what == AgentRuntimeWire.MSG_QUERY_ACTIVE_RUN_RESPONSE) {
-                onResponse(AgentRuntimeWire.runIdFromBundle(msg.data ?: return))
+                val data = msg.data ?: return
+                onResponse(
+                    AgentRuntimeWire.runIdFromBundle(data),
+                    AgentRuntimeWire.activeRunIdsFromBundle(data),
+                )
             }
         }
     }

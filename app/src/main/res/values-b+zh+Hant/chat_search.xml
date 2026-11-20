@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="chat_search_open">尋找目前對話</string>
+    <string name="chat_search_open">尋找文字</string>
     <string name="chat_search_placeholder">在目前對話中尋找文字</string>
     <string name="chat_search_close">關閉尋找</string>
     <string name="chat_search_searching">正在搜尋已載入的訊息…</string>

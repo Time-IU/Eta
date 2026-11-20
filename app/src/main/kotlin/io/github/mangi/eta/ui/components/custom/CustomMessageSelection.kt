@@ -9,6 +9,10 @@ import androidx.compose.foundation.text.selection.DisableSelection
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.text.selection.rememberSelectionState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.movableContentOf
+import androidx.compose.ui.text.TextRange
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.compositionLocalOf
@@ -42,51 +46,76 @@ internal fun CustomMessageSelection(
     onCopiedSelection: (String) -> Unit,
     content: @Composable () -> Unit,
 ) {
-    if (!explicitSelection) {
-        // Null the public selection registrar: ordinary text must not join an ancestor.
-        // This does not intercept pointers; combinedClickable and list dragging stay native.
-        DisableSelection { content() }
-        return
-    }
-    val selection = rememberSelectionState()
-    val laidOut = androidx.compose.runtime.remember(selection) { MutableStateFlow(false) }
-    val currentSelectionCallback = rememberUpdatedState(onCopiedSelection)
-    val currentActions = rememberUpdatedState(LocalCustomSelectionActions.current)
-    LaunchedEffect(selection) {
-        // Wait for this actual body to register its selectable text, not a second long press.
-        laidOut.first { it }
-        withFrameNanos { }
-        selection.selectAll()
-    }
-    LaunchedEffect(selection) {
-        snapshotFlow { selection.selectedTexts.joinToString("\n") { it.text } }
-            .collect { currentSelectionCallback.value(it) }
-    }
-    DisposableEffect(selection) {
-        currentActions.value?.bindSelectionReader?.invoke {
-            selection.selectedTexts.joinToString("\n") { it.text }
+    val hits = remember { MessageSentenceHits() }
+    val latestContent = rememberUpdatedState(content)
+    // Move the same render tree: selection toggles must not restart parsing/reveal or recreate body state.
+    val body = remember { movableContentOf { latestContent.value() } }
+    CompositionLocalProvider(LocalMessageSentenceHits provides hits) {
+        if (!explicitSelection) {
+            // Null the public selection registrar: ordinary text must not join an ancestor.
+            // This does not intercept pointers; combinedClickable and list dragging stay native.
+            DisableSelection { body() }
+            return@CompositionLocalProvider
         }
-        onDispose {
-            currentActions.value?.bindSelectionReader?.invoke(null)
-            selection.clear()
-        }
-    }
-    SelectionContainer(
-        state = selection,
-        modifier = Modifier.onGloballyPositioned { laidOut.value = true }
-            .appendTextContextMenuComponents {
-                CustomSelectionAction.entries.forEach { action ->
-                    item(key = action, label = action.label) {
-                        // Capture the real current substring before releasing toolbar focus.
-                        val selected = selection.selectedTexts.joinToString("\n") { it.text }
-                        currentActions.value?.perform?.invoke(action, selected)
-                        close()
-                    }
+        val selection = rememberSelectionState()
+        val laidOut = androidx.compose.runtime.remember(selection) { MutableStateFlow(false) }
+        val currentSelectionCallback = rememberUpdatedState(onCopiedSelection)
+        val currentActions = rememberUpdatedState(LocalCustomSelectionActions.current)
+        LaunchedEffect(selection) {
+            // Wait for this actual body to register its selectable text, not a second long press.
+            laidOut.first { it }
+            withFrameNanos { }
+            val request = hits.request
+            hits.request = null
+            if (request == null) selection.selectAll()
+            else {
+                // Use the actual SelectionContainer registry. Fail closed if layout changed meanwhile.
+                val actual = selection.getSelectableTexts().map { it.text }
+                if (actual == request.texts) {
+                    val base = actual.take(request.index).sumOf { it.length }
+                    // A local-0 global start is left-biased into the preceding selectable.
+                    // Seed strictly inside the intended node, then correct BOTH real anchors
+                    // and registrar subselections in the same turn (before another frame).
+                    val boundaryStart = request.index > 0 && request.range.start == 0
+                    val seedStart = if (boundaryStart) 1 else request.range.start
+                    selection.select(TextRange(base + seedStart, base + request.range.end))
+                    if (boundaryStart && !Foundation113SelectionAnchors.anchorSeed(selection, actual[request.index],
+                            request.range.start, request.range.end)) selection.clear()
                 }
             }
-            // Remove native Copy/Select-all/process-text as well: no duplicates or overflow list.
-            .filterTextContextMenuComponents { it.key is CustomSelectionAction },
-    ) {
-        Column { content() }
+        }
+        LaunchedEffect(selection) {
+            snapshotFlow { selection.selectedTexts.joinToString("\n") { it.text } }
+                .collect { currentSelectionCallback.value(it) }
+        }
+        DisposableEffect(selection) {
+            hits.activeSelection = selection
+            currentActions.value?.bindSelectionReader?.invoke {
+                selection.selectedTexts.joinToString("\n") { it.text }
+            }
+            onDispose {
+                if (hits.activeSelection === selection) hits.activeSelection = null
+                currentActions.value?.bindSelectionReader?.invoke(null)
+                selection.clear()
+            }
+        }
+        SelectionContainer(
+            state = selection,
+            modifier = Modifier.onGloballyPositioned { laidOut.value = true }
+                .appendTextContextMenuComponents {
+                    CustomSelectionAction.entries.forEach { action ->
+                        item(key = action, label = action.label) {
+                            // Capture the real current substring before releasing toolbar focus.
+                            val selected = selection.selectedTexts.joinToString("\n") { it.text }
+                            currentActions.value?.perform?.invoke(action, selected)
+                            close()
+                        }
+                    }
+                }
+                // Remove native Copy/Select-all/process-text as well: no duplicates or overflow list.
+                .filterTextContextMenuComponents { it.key is CustomSelectionAction },
+        ) {
+            Column { body() }
+        }
     }
 }

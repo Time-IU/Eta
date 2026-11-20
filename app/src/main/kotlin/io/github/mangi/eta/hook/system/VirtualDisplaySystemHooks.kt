@@ -86,7 +86,16 @@ internal object VirtualDisplaySystemHooks {
             description = "DisplayManagerService\$BinderService.createVirtualDisplay",
         ) { chain ->
             if (Build.VERSION.SDK_INT < Build.VERSION_CODES.UPSIDE_DOWN_CAKE ||
-                !Prefs.isEnabled(Prefs.Keys.AGENT_VIRTUAL_DISPLAY_ENABLED)
+                !runCatching {
+                    // Retry the real framework bridge after transient service unavailability.
+                    // Missing/malformed signals fail closed; local App preferences are not authority.
+                    val preferences = module.getRemotePreferences(Prefs.GROUP)
+                    fun present(key: String): Boolean? =
+                        if (preferences.contains(key)) preferences.getBoolean(key, false) else null
+                    val effective = present(io.github.mangi.eta.config.UnifiedCanvasGatePolicy.EFFECTIVE_KEY)
+                    if (effective != null) effective else io.github.mangi.eta.config.UnifiedCanvasGatePolicy.enabled(
+                        null, present(Prefs.Keys.AGENT_VIRTUAL_DISPLAY_ENABLED))
+                }.getOrDefault(false)
             ) {
                 return@intercept chain.proceed()
             }

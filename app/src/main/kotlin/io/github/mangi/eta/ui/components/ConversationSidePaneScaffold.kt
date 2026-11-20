@@ -7,15 +7,22 @@ import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.interaction.DragInteraction
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsDraggedAsState
-import androidx.compose.foundation.gestures.AnchoredDraggableDefaults
 import androidx.compose.foundation.gestures.AnchoredDraggableState
 import androidx.compose.foundation.gestures.DraggableAnchors
-import androidx.compose.foundation.gestures.Orientation
-import androidx.compose.foundation.gestures.anchoredDraggable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.awaitHorizontalTouchSlopOrCancellation
+import androidx.compose.foundation.gestures.horizontalDrag
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.positionChange
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.foundation.gestures.animateTo
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -24,6 +31,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.AbsoluteAlignment
@@ -50,8 +58,12 @@ import androidx.navigationevent.compose.rememberNavigationEventState
 import io.github.mangi.eta.R
 import io.github.mangi.eta.ui.model.ConversationPaneUiState
 import io.github.mangi.eta.ui.model.ConversationSummaryUi
+import kotlin.math.abs
 import kotlin.math.roundToInt
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 
@@ -73,27 +85,47 @@ fun ConversationSidePaneScaffold(
     onOpen: () -> Unit,
     onDismiss: () -> Unit,
     onSearchChange: (String) -> Unit,
-    onNewConversation: () -> Unit = {},
+    onNewConversation: () -> Unit,
+    onNewConversationInCategory: (String?) -> Unit = { _ -> onNewConversation() },
     onConversationSelected: (String) -> Unit,
     onConversationTogglePin: (ConversationSummaryUi) -> Unit,
     onConversationRename: (ConversationSummaryUi) -> Unit,
+    onMoveToCategory: (ConversationSummaryUi) -> Unit,
     onConversationExport: (ConversationSummaryUi) -> Unit,
     onConversationDelete: (ConversationSummaryUi) -> Unit,
+    onConversationPin: (ConversationSummaryUi) -> Unit,
+    onBatchDelete: (List<ConversationSummaryUi>) -> Unit,
     onOpenSettings: () -> Unit,
+    onOpenRootSettings: () -> Unit,
+    onOpenAccessibilitySettings: () -> Unit,
     onOpenModelProviders: () -> Unit,
     onOpenTools: () -> Unit,
     onOpenSkills: () -> Unit,
     onOpenCharacters: () -> Unit,
     onOpenPermissions: () -> Unit,
+    onOpenTasks: () -> Unit,
+    onCreateCategory: (String) -> Unit,
+    onRenameCategory: (String, String) -> Unit,
+    onMoveCategory: (String, Int) -> Unit,
+    onDeleteCategoryConfirmed: (String) -> Unit,
+    /** 拖放落点：目标分组 id，null 表示移出分组。 */
+    onDropConversationToCategory: ((ConversationSummaryUi, String?) -> Unit)? = null,
     modifier: Modifier = Modifier,
     activeModelLabel: String? = null,
     hasPermissionAttention: Boolean = false,
+    workspaceVisible: Boolean = false,
+    onWorkspaceOpen: () -> Unit = {},
+    onWorkspaceDismiss: () -> Unit = {},
+    workspaceContent: (@Composable () -> Unit)? = null,
     content: @Composable () -> Unit,
 ) {
     val sceneLifecycleState by LocalLifecycleOwner.current.lifecycle.currentStateFlow.collectAsState()
     val navigationEventState = rememberNavigationEventState(NavigationEventInfo.None)
 
     BoxWithConstraints(modifier = modifier.fillMaxSize()) {
+        val screenWidthPx = constraints.maxWidth.toFloat()
+        val selectionLock = remember { ChatSelectionLock() }
+        val edgeWidth = with(LocalDensity.current) { 24.dp.toPx() }
         val density = LocalDensity.current
         val paneWidth = minOf(maxWidth * ConversationPaneMetrics.PaneWidthFraction, ConversationPaneMetrics.PaneMaxWidth)
         val paneWidthPx = with(density) { paneWidth.toPx() }
@@ -116,13 +148,6 @@ fun ConversationSidePaneScaffold(
                 visibilityThreshold = ConversationPaneMetrics.SettleVisibilityThresholdPx,
             )
         }
-        val flingBehavior = AnchoredDraggableDefaults.flingBehavior(
-            state = paneDragState,
-            positionalThreshold = { distance ->
-                distance * ConversationPaneMetrics.SettlePositionThresholdFraction
-            },
-            animationSpec = settleAnimation,
-        )
         val currentVisible by rememberUpdatedState(visible)
         val currentOnOpen by rememberUpdatedState(onOpen)
         val currentOnDismiss by rememberUpdatedState(onDismiss)
@@ -198,25 +223,50 @@ fun ConversationSidePaneScaffold(
         // 处理侧栏返回，避免它抢先消费二级页面的第一次返回事件。
         NavigationBackHandler(
             state = navigationEventState,
-            isBackEnabled = isRevealed &&
+            isBackEnabled = (isRevealed || workspaceVisible) &&
                 backHandlerEnabled &&
                 sceneLifecycleState == Lifecycle.State.RESUMED,
-            onBackCompleted = closePane,
+            onBackCompleted = { if (workspaceVisible) onWorkspaceDismiss() else closePane() },
         )
 
         Box(
             modifier = Modifier.fillMaxSize()
                 .clipToBounds()
                 .background(conversationPaneContainerColor())
-                // 手势由共同容器拥有，侧栏和聊天舞台均可拖动；子级先处理滚动与选择。
-                .anchoredDraggable(
-                    state = paneDragState,
-                    reverseDirection = false,
-                    orientation = Orientation.Horizontal,
-                    enabled = backHandlerEnabled && sceneLifecycleState == Lifecycle.State.RESUMED,
-                    flingBehavior = flingBehavior,
-                    interactionSource = dragInteractions,
-                ),
+                // Only an edge-origin right swipe opens history. No left-swipe workspace anchor.
+                // Initial-pass observation never consumes a down; native text selection gets priority.
+                .pointerInput(paneDragState, paneWidthPx, edgeWidth, backHandlerEnabled, sceneLifecycleState, workspaceVisible) {
+                    awaitEachGesture {
+                        val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                        val openAtStart = currentVisible || paneDragState.offset > 0.5f
+                        if (!ChatGesturePolicy.canStart(down.position.x, edgeWidth, openAtStart,
+                                selectionLock.active, workspaceVisible,
+                                backHandlerEnabled && sceneLifecycleState == Lifecycle.State.RESUMED)) return@awaitEachGesture
+                        var initialDelta = 0f
+                        val slop = awaitHorizontalTouchSlopOrCancellation(down.id) { change, over ->
+                            if (!selectionLock.active && ChatGesturePolicy.acceptsInitialDelta(over, openAtStart)) {
+                                initialDelta = over
+                                change.consume()
+                            }
+                        } ?: return@awaitEachGesture
+                        if (selectionLock.active) return@awaitEachGesture
+                        val interaction = DragInteraction.Start()
+                        dragInteractions.tryEmit(interaction)
+                        paneDragState.dispatchRawDelta(initialDelta)
+                        val completed = horizontalDrag(slop.id) { change ->
+                            if (!selectionLock.active) {
+                                paneDragState.dispatchRawDelta(change.positionChange().x)
+                                change.consume()
+                            }
+                        }
+                        dragInteractions.tryEmit(if (completed && !selectionLock.active)
+                            DragInteraction.Stop(interaction) else DragInteraction.Cancel(interaction))
+                        val target = if (completed && !selectionLock.active)
+                            ChatGesturePolicy.settleOpen(paneDragState.offset, paneWidthPx) else openAtStart
+                        scope.launch { paneDragState.animateTo(if (target) ConversationPaneAnchor.Open else
+                            ConversationPaneAnchor.Closed, settleAnimation) }
+                    }
+                },
             contentAlignment = AbsoluteAlignment.TopLeft,
         ) {
             // 两个槽位并排测量和放置，由同一位移推移；不在聊天内容下面叠放侧栏。
@@ -233,17 +283,29 @@ fun ConversationSidePaneScaffold(
                         hasPermissionAttention = hasPermissionAttention,
                         onSearchChange = onSearchChange,
                         onNewConversation = onNewConversation,
+                        onNewConversationInCategory = onNewConversationInCategory,
                         onConversationSelected = onConversationSelected,
                         onConversationTogglePin = onConversationTogglePin,
                         onConversationRename = onConversationRename,
+                        onMoveToCategory = onMoveToCategory,
+                        onDropConversationToCategory = onDropConversationToCategory,
                         onConversationExport = onConversationExport,
                         onConversationDelete = onConversationDelete,
+                        onConversationPin = onConversationPin,
+                        onBatchDelete = onBatchDelete,
                         onOpenSettings = onOpenSettings,
+                        onOpenRootSettings = onOpenRootSettings,
+                        onOpenAccessibilitySettings = onOpenAccessibilitySettings,
                         onOpenModelProviders = onOpenModelProviders,
                         onOpenTools = onOpenTools,
                         onOpenSkills = onOpenSkills,
                         onOpenCharacters = onOpenCharacters,
                         onOpenPermissions = onOpenPermissions,
+                        onOpenTasks = onOpenTasks,
+                        onCreateCategory = onCreateCategory,
+                        onRenameCategory = onRenameCategory,
+                        onMoveCategory = onMoveCategory,
+                        onDeleteCategoryConfirmed = onDeleteCategoryConfirmed,
                         modifier = Modifier
                             .focusProperties { onEnter = { if (!isRevealed) cancelFocusChange() } }
                             .focusGroup()
@@ -266,7 +328,7 @@ fun ConversationSidePaneScaffold(
                                 .focusGroup()
                                 .then(if (isRevealed) Modifier.clearAndSetSemantics {} else Modifier),
                         ) {
-                            content()
+                            CompositionLocalProvider(LocalChatSelectionLock provides selectionLock) { content() }
                         }
                         if (isRevealed) {
                             Box(
@@ -295,6 +357,12 @@ fun ConversationSidePaneScaffold(
                     page.placeWithLayer(offset, 0)
                 }
             }
+
+            // The existing menu controls workspace visibility. No swipe or negative offset is involved.
+            if (workspaceVisible && workspaceContent != null) {
+                Box(Modifier.fillMaxSize()) { workspaceContent() }
+            }
+
         }
     }
 }

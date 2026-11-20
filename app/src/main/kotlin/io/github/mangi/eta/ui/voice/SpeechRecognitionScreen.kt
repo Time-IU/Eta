@@ -45,6 +45,7 @@ internal fun SpeechRecognitionScreen(onBack: () -> Unit, onOpenOss: () -> Unit) 
     val settings = store.settings
     val asrLabels = AsrProvider.selectable.map { it.label() }
     val asrNoteRes = when (settings.asr) {
+        AsrProvider.SYSTEM -> R.string.speech_asr_note_system
         AsrProvider.QWEN_REALTIME, AsrProvider.DOUBAO -> R.string.speech_asr_note_streaming
         AsrProvider.QWEN_FLASH -> R.string.speech_asr_note_flash
         AsrProvider.QWEN_FILE -> R.string.speech_asr_note_file
@@ -54,7 +55,7 @@ internal fun SpeechRecognitionScreen(onBack: () -> Unit, onOpenOss: () -> Unit) 
     }
     val showQwenLanguage = when (settings.asr) {
         AsrProvider.QWEN_REALTIME, AsrProvider.QWEN_FLASH, AsrProvider.QWEN_FILE -> true
-        AsrProvider.DOUBAO, AsrProvider.MIMO, AsrProvider.DEEPSEEK, AsrProvider.LOCAL, AsrProvider.SHERPA_NCNN, AsrProvider.QWEN3_LOCAL -> false
+        AsrProvider.SYSTEM, AsrProvider.DOUBAO, AsrProvider.MIMO, AsrProvider.DEEPSEEK, AsrProvider.LOCAL, AsrProvider.SHERPA_NCNN, AsrProvider.QWEN3_LOCAL -> false
     }
 
     when (LocalUiStyle.current) {
@@ -112,7 +113,7 @@ internal fun SpeechRecognitionScreen(onBack: () -> Unit, onOpenOss: () -> Unit) 
                 } else {
                     SpeechNote(stringResource(R.string.speech_recognition_disabled_note))
                 }
-                SpeechSaveBlock(store, persistCredentials = !settings.asr.isLocal) {
+                SpeechSaveBlock(store, persistCredentials = !settings.asr.isLocal && settings.asr != AsrProvider.SYSTEM) {
                     validateSpeechSettings(
                         store.settings,
                         store.credentials,
@@ -197,7 +198,7 @@ internal fun SpeechRecognitionScreen(onBack: () -> Unit, onOpenOss: () -> Unit) 
                     }
                 }
                 item(key = "save") {
-                    SpeechSaveBlock(store, persistCredentials = !settings.asr.isLocal) {
+                    SpeechSaveBlock(store, persistCredentials = !settings.asr.isLocal && settings.asr != AsrProvider.SYSTEM) {
                         validateSpeechSettings(store.settings, store.credentials, synthesis = false)
                     }
                 }
@@ -210,10 +211,8 @@ internal fun SpeechRecognitionScreen(onBack: () -> Unit, onOpenOss: () -> Unit) 
 private fun SpeechResultSection(store: SpeechSettingsStore) {
     val settings = store.settings
     val offline = settings.asr.isLocal
-    val streaming = when (settings.asr) {
-        AsrProvider.QWEN_REALTIME, AsrProvider.DOUBAO, AsrProvider.LOCAL, AsrProvider.SHERPA_NCNN, AsrProvider.QWEN3_LOCAL -> true
-        AsrProvider.MIMO, AsrProvider.QWEN_FLASH, AsrProvider.QWEN_FILE, AsrProvider.DEEPSEEK -> false
-    }
+    // Capture-side endpointing applies to local, stream and file ASR alike.
+    val supportsEndpoint = settings.recognitionEnabled
     val options = SpeechSettings.AUTO_SEND_SILENCE_OPTIONS
     val optionLabels = options.map { millis ->
         if (millis == 0) {
@@ -229,7 +228,7 @@ private fun SpeechResultSection(store: SpeechSettingsStore) {
 
     Column {
         SpeechGroupCard(title = stringResource(R.string.speech_group_result)) {
-            if (streaming) {
+            if (supportsEndpoint) {
                 if (uiStyle == AppearanceUiStyle.COUI) {
                     CouiDropdownPreference(
                         title = stringResource(R.string.speech_auto_send_title),
@@ -269,13 +268,21 @@ private fun SpeechResultSection(store: SpeechSettingsStore) {
                 )
             }
         }
-        if (streaming) SpeechNote(stringResource(R.string.speech_auto_send_note))
+        if (supportsEndpoint) SpeechNote(stringResource(R.string.speech_auto_send_note))
     }
 }
 
 @Composable
 private fun SpeechRecognitionTestSection(store: SpeechSettingsStore) {
     val state by store.recognition.state.collectAsState()
+    if (state.downloadAvailable) {
+        SpeechNote("系统识别服务需要语言模型。点击下载会使用该服务的模型下载通道。")
+        if (LocalUiStyle.current == AppearanceUiStyle.COUI) {
+            CouiButton(text = stringResource(R.string.voice_download_model), onClick = store.recognition::downloadModel)
+        } else {
+            TextButton(text = stringResource(R.string.voice_download_model), onClick = store.recognition::downloadModel)
+        }
+    }
     val request = rememberSpeechPermission { store.recognition.start(store.settings, store.credentials) }
     val summary = state.error
         ?: state.preview.take(200).ifBlank { state.progress }.ifBlank { null }

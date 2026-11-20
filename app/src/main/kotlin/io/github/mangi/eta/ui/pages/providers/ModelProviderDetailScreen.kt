@@ -45,6 +45,7 @@ import io.github.mangi.eta.data.model.AppearanceUiStyle
 import io.github.mangi.eta.data.model.CustomProviderSetting
 import io.github.mangi.eta.data.model.GeminiProviderSetting
 import io.github.mangi.eta.data.model.OpenAiEndpointMode
+import io.github.mangi.eta.data.model.ProviderAuthModes
 import io.github.mangi.eta.data.model.ProviderSetting
 import io.github.mangi.eta.data.model.withId
 import io.github.mangi.eta.data.repository.ProviderRepository
@@ -703,7 +704,9 @@ private fun ProviderConfigTab(
 private suspend fun testConnection(
     context: android.content.Context,
     provider: ProviderSetting,
-): String =
+): String = if (ProviderAuthModes.isBorrowedVendor(provider.authMode)) {
+    "本地助手通道不适用 HTTP 连接测试；请通过对话验证连接"
+} else {
     RemoteModelFetcher.fetch(provider)
         .map { context.resources.getQuantityString(R.plurals.provider_models_fetched, it.size, it.size) }
         .getOrElse { throwable ->
@@ -712,3 +715,5 @@ private suspend fun testConnection(
                 throwable.message ?: throwable.javaClass.simpleName,
             )
         }
+
+}

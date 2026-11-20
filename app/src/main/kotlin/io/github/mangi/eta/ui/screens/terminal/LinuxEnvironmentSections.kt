@@ -1,5 +1,6 @@
 package io.github.mangi.eta.ui.screens.terminal
 
+import io.github.mangi.eta.agent.terminal.LinuxCapabilityItem
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -240,3 +241,32 @@ internal fun LinuxExecutionBackend.displayName(): String = stringResource(
         LinuxExecutionBackend.CHROOT -> R.string.capability_linux_chroot
     },
 )
+
+@Composable
+internal fun LinuxCapabilitySection(items: List<LinuxCapabilityItem>, checking: Boolean) {
+    if (items.isEmpty() && !checking) return
+    val body: @Composable () -> Unit = {
+        if (checking && items.isEmpty()) {
+            if (LocalUiStyle.current == AppearanceUiStyle.COUI) {
+                CouiPreference(title = "正在检测环境能力…", summary = "直接检测当前发行版的工具", showChevron = false)
+            } else {
+                BasicComponent(title = "正在检测环境能力…", summary = "直接检测当前发行版的工具")
+            }
+        }
+        items.forEach { item ->
+            val label = if (item.ready) "可用" else "未安装"
+            if (LocalUiStyle.current == AppearanceUiStyle.COUI) {
+                CouiPreference(title = item.title, summary = item.purpose, value = label, showChevron = false)
+            } else {
+                BasicComponent(title = item.title, summary = item.purpose,
+                    endActions = { Text(label, style = MiuixTheme.textStyles.footnote1) })
+            }
+        }
+    }
+    if (LocalUiStyle.current == AppearanceUiStyle.COUI) {
+        Group(title = "环境能力 · 自动检测") { body() }
+    } else {
+        top.yukonga.miuix.kmp.basic.SmallTitle("环境能力 · 自动检测")
+        Card(modifier = Modifier.padding(horizontal = 12.dp).padding(bottom = 12.dp)) { body() }
+    }
+}

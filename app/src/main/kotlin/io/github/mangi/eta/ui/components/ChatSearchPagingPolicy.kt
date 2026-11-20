@@ -7,6 +7,7 @@ internal enum class ChatSearchPagingDecision { Inactive, Complete, Loading, Paus
 /** One request per exclusive history cursor. Only an explicit retry may reuse that cursor.
  * A new query must not accidentally retry an old failure or duplicate an unacknowledged request.
  */
+@JvmOverloads
 internal fun chatSearchPagingDecision(
     open: Boolean,
     query: String,
@@ -16,8 +17,9 @@ internal fun chatSearchPagingDecision(
     loadState: ConversationHistoryLoadState,
     requestedBefore: Int?,
     retry: Boolean = false,
+    includeOutline: Boolean = false,
 ): ChatSearchPagingDecision = when {
-    !open || query.isBlank() -> ChatSearchPagingDecision.Inactive
+    !open || (!includeOutline && query.isBlank()) -> ChatSearchPagingDecision.Inactive
     loadState == ConversationHistoryLoadState.Loading -> ChatSearchPagingDecision.Loading
     !hasEarlier -> ChatSearchPagingDecision.Complete
     !canLoad -> ChatSearchPagingDecision.Paused

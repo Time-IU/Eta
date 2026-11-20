@@ -932,8 +932,15 @@ private fun ModelEditDialog(
     onDelete: (() -> Unit)?,
 ) {
     val context = LocalContext.current
+    // Infer metadata only for non-native providers without an explicit capability
+    // record. Preserve the native Gemini request/override rules from custom.5.
+    val inferredCapabilities = remember(model.id, isNew) {
+        if (!nativeGemini && model.effectiveReasoningCapabilities == null) {
+            io.github.mangi.eta.data.model.ModelReasoningInference.infer(model.modelId)
+        } else null
+    }
     val initialCapabilities = if (nativeGemini) GeminiModelCapabilities.resolveReasoning(model)
-        else model.effectiveReasoningCapabilities
+        else model.effectiveReasoningCapabilities ?: inferredCapabilities
     val availableEfforts = if (nativeGemini) GeminiModelCapabilities.configurableEfforts else editableReasoningEfforts
     var displayName by remember(model.id, isNew) { mutableStateOf(model.displayName) }
     var modelId by remember(model.id, isNew) { mutableStateOf(model.modelId) }
@@ -943,13 +950,13 @@ private fun ModelEditDialog(
     }
     var reasoningOverrideActive by remember(model.id, isNew) {
         mutableStateOf(
-            model.reasoningOverride != null || model.reasoningCapabilitiesOverride != null
+            model.reasoningOverride != null || model.reasoningCapabilitiesOverride != null || inferredCapabilities != null
         )
     }
     var reasoningEnabled by remember(model.id, isNew) {
         mutableStateOf(
             if (nativeGemini) model.reasoningOverride ?: initialCapabilities?.supportedEfforts.orEmpty().isNotEmpty()
-            else model.supportsReasoning
+            else model.supportsReasoning || inferredCapabilities != null
         )
     }
     var selectedReasoningEfforts by remember(model.id, isNew) {

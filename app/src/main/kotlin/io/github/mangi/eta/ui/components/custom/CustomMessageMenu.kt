@@ -6,7 +6,6 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.LocalOnBackPressedDispatcherOwner
 import androidx.navigationevent.compose.LocalNavigationEventDispatcherOwner
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.text.input.setTextAndPlaceCursorAtEnd
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.CallSplit
 import androidx.compose.material.icons.automirrored.rounded.VolumeUp
@@ -48,6 +47,7 @@ internal fun CustomMessageActionsHost(
     val context = LocalContext.current
     val clipboard = LocalClipboardManager.current
     val composer = LocalCustomComposer.current
+    val attachReference = LocalCustomReference.current
     val speech = key(composer, messageId) { rememberCustomSpeechController(messageId, enabled) }
     val persistence = LocalCustomMessagePersistence.current
     val saveController = key(composer, messageId, text) { rememberMessageSaveActions(persistence) }
@@ -61,6 +61,13 @@ internal fun CustomMessageActionsHost(
     }
     val expanded = interaction.menuOpen
     val selecting = enabled && interaction.selecting
+    val paneSelectionLock = io.github.mangi.eta.ui.components.LocalChatSelectionLock.current
+    val selectionToken = remember { Any() }
+    androidx.compose.runtime.DisposableEffect(paneSelectionLock, selectionToken, selecting) {
+        if (selecting) paneSelectionLock?.acquire(selectionToken)
+        onDispose { paneSelectionLock?.release(selectionToken) }
+    }
+
     var selectedText by remember(composer, messageId, text, enabled) { mutableStateOf<String?>(null) }
     var menuSelectionText by remember(composer, messageId, text, enabled) { mutableStateOf<String?>(null) }
     val selectionReader = remember(composer, messageId, text, enabled) { mutableStateOf<(() -> String)?>(null) }
@@ -131,7 +138,7 @@ internal fun CustomMessageActionsHost(
             if (enabled) {
                 add(CustomSelectionAction.COPY)
                 add(CustomSelectionAction.SPEAK)
-                if (composer != null) add(CustomSelectionAction.QUOTE)
+                if (attachReference != null) add(CustomSelectionAction.QUOTE)
             }
             add(CustomSelectionAction.DONE)
         },
@@ -139,13 +146,13 @@ internal fun CustomMessageActionsHost(
             when {
                 action == CustomSelectionAction.DONE -> finishSelection()
                 !enabled -> notice("消息处理中，暂不可用")
-                action == CustomSelectionAction.QUOTE && composer == null -> notice("当前没有可引用的输入框")
+                action == CustomSelectionAction.QUOTE && attachReference == null -> notice("当前没有可引用的输入框")
                 selected.isBlank() -> notice("尚未选中文字")
                 else -> when (action) {
                     CustomSelectionAction.COPY -> clipboard.setText(AnnotatedString(selected))
                     CustomSelectionAction.SPEAK -> speak(selected)
                     CustomSelectionAction.QUOTE -> {
-                        composer?.let { it.setTextAndPlaceCursorAtEnd(quoteWithDraft(selected, it.text.toString())) }
+                        attachReference?.invoke(messageId, selected)
                         finishSelection()
                     }
                     CustomSelectionAction.DONE -> Unit
@@ -166,9 +173,12 @@ internal fun CustomMessageActionsHost(
             AnswerActionButton(Icons.Rounded.FormatQuote, "引用追问", {
                 when {
                     !enabled -> notice("消息处理中，暂不可用")
-                    composer == null -> notice("当前没有可引用的输入框")
-                    text.isBlank() -> notice("没有可选取的文字")
-                    else -> beginSelection()
+                    attachReference == null -> notice("当前没有可引用的输入框")
+                    actionText.isBlank() -> notice("没有可引用的文字")
+                    else -> {
+                        attachReference.invoke(messageId, if (selecting) actionText else null)
+                        finishSelection()
+                    }
                 }
             })
         }
@@ -182,8 +192,9 @@ internal fun CustomMessageActionsHost(
         }
     }
     Column {
-        key(composer, messageId, text) {
+        key(composer, messageId) {
             CompositionLocalProvider(
+                LocalBeginMessageSelection provides (if (enabled && !selecting) ({ beginSelection() }) else null),
                 LocalCustomSelectionActions provides selectionActions,
                 LocalCustomMessageActionSlots provides toolbar,
             ) {
@@ -211,7 +222,10 @@ internal fun CustomMessageActionsHost(
         MessageMenuAction("分享", Icons.Rounded.Share, emptyReason) { share(actionText) },
         MessageMenuAction("删除", Icons.Rounded.Delete, if (onDelete == null) "当前消息不能删除" else null) { onDelete?.invoke() },
         MessageMenuAction("引用追问", Icons.Rounded.FormatQuote,
-            if (composer == null) "当前没有可引用的输入框" else if (text.isBlank()) "没有可选取的文字" else null) { beginSelection() },
+            if (attachReference == null) "当前没有可引用的输入框" else emptyReason) {
+                attachReference?.invoke(messageId, if (selecting) actionText else null)
+                finishSelection()
+            },
         MessageMenuAction("保存记忆", Icons.Rounded.Memory, saveReason) { save(false, actionText) },
         MessageMenuAction("保存技能", Icons.Rounded.RocketLaunch, saveReason) { save(true, actionText) },
         MessageMenuAction("在新对话中继续", Icons.AutoMirrored.Rounded.CallSplit,

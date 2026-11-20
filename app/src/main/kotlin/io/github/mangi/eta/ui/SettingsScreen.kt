@@ -1,5 +1,7 @@
 package io.github.mangi.eta.ui
 
+import io.github.mangi.eta.data.datastore.SettingsDataStore
+import androidx.compose.ui.platform.LocalContext
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
@@ -52,7 +54,7 @@ import androidx.compose.material.icons.rounded.VerifiedUser
 import androidx.compose.material.icons.rounded.Visibility
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.collectAsState
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -88,10 +90,11 @@ import io.github.mangi.eta.data.model.enabledModel
 import io.github.mangi.eta.data.repository.ProviderRepository
 import io.github.mangi.eta.data.repository.RuntimeConfigRepository
 import io.github.mangi.eta.data.update.AppLatestRelease
+import io.github.mangi.eta.data.update.PersonalDistribution
+import io.github.mangi.eta.ui.components.SelectionCopyDialog
 import io.github.mangi.eta.data.update.AppUpdateChecker
 import io.github.mangi.eta.ui.app.EnhancementSettingsHistory
 import io.github.mangi.eta.ui.app.LocalUiStyle
-import io.github.mangi.eta.ui.app.rememberDeviceCapabilities
 import io.github.mangi.eta.ui.components.LanguagePreference
 import io.github.mangi.eta.ui.components.MiuixDialogActions
 import io.github.mangi.eta.ui.components.MiuixScaffoldPage
@@ -106,11 +109,14 @@ import io.github.mangi.eta.ui.components.coui.CouiScaffoldPage
 import io.github.mangi.eta.ui.components.coui.CouiSettingsIcon
 import io.github.mangi.eta.ui.components.coui.CouiSwitchPreference
 import io.github.mangi.eta.ui.model.AgentModelPickerProjector
+import io.github.mangi.eta.ui.navigation.OverlayPermissionNavigation
 import io.github.mangi.eta.ui.navigation.AppRoute
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.withContext
 import top.yukonga.miuix.kmp.basic.BasicComponent
 import top.yukonga.miuix.kmp.basic.Card
@@ -130,8 +136,25 @@ private object SettingsIconColors {
     val Yellow = StatusWarning
 }
 
+/** Shared legacy Settings palette; both UI styles resolve omitted tints identically. */
+internal fun settingsIconTint(icon: ImageVector): Color = when (icon) {
+    Icons.AutoMirrored.Rounded.MenuBook,
+    Icons.Rounded.SportsBar,
+    Icons.Rounded.Inventory2,
+    Icons.Rounded.BrightnessHigh,
+    Icons.Rounded.Palette,
+    Icons.Rounded.BugReport -> SettingsIconColors.Orange
+    Icons.Rounded.ImportContacts,
+    Icons.Rounded.Dashboard,
+    Icons.Rounded.SupportAgent,
+    Icons.Rounded.Settings,
+    Icons.Rounded.SystemUpdate -> SettingsIconColors.Green
+    Icons.Rounded.PowerSettingsNew -> SettingsIconColors.Yellow
+    else -> SettingsIconColors.Blue
+}
+
 @Composable
-private fun SettingsGroupCard(content: @Composable () -> Unit) {
+internal fun SettingsGroupCard(content: @Composable () -> Unit) {
     Card(
         modifier = Modifier
             .padding(horizontal = 12.dp)
@@ -142,30 +165,13 @@ private fun SettingsGroupCard(content: @Composable () -> Unit) {
 }
 
 @Composable
-private fun SettingsIcon(
+internal fun SettingsIcon(
     icon: ImageVector,
     enabled: Boolean = true,
+    tint: Color = settingsIconTint(icon),
 ) {
-    val glyphSize = when (icon) {
-        Icons.AutoMirrored.Rounded.MenuBook -> 22.dp
-        else -> 24.dp
-    }
-    Box(
-        modifier = Modifier
-            .padding(end = 8.dp)
-            .size(24.dp),
-        contentAlignment = Alignment.Center,
-    ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = null,
-            modifier = Modifier.size(glyphSize),
-            tint = if (enabled) {
-                MiuixTheme.colorScheme.onBackground
-            } else {
-                MiuixTheme.colorScheme.disabledOnSecondaryVariant
-            },
-        )
+    Box(modifier = Modifier.padding(end = 8.dp)) {
+        CleanupIconTile(icon = icon, tint = tint, enabled = enabled)
     }
 }
 
@@ -191,7 +197,6 @@ private fun SettingsPageContent(
     onBack: () -> Unit,
 ) {
     val coroutineScope = rememberCoroutineScope()
-    val capabilities = rememberDeviceCapabilities()
     val enhancementHistory = remember(context.applicationContext) { EnhancementSettingsHistory(context) }
     var hasConnectedFramework by remember { mutableStateOf(enhancementHistory.hasConnected) }
 
@@ -212,30 +217,38 @@ private fun SettingsPageContent(
         context.packageManager.getPackageInfo(context.packageName, 0)
     }
     val appVersionName = appPackageInfo.versionName.orEmpty()
-    val appVersionSummary = "${appPackageInfo.versionName} (${appPackageInfo.longVersionCode})"
+    val appLocale = context.resources.configuration.locales[0]
+    val traditional = appLocale.script == "Hant" || appLocale.country in setOf("TW", "HK", "MO")
+    val appVersionSummary = PersonalDistribution.versionSummary(appVersionName, appLocale.language, traditional)
+    var showVersionDetails by remember { mutableStateOf(false) }
     val openUrl: (String) -> Unit = { url ->
         context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
     }
     var checkingUpdate by remember { mutableStateOf(false) }
     var availableUpdate by remember { mutableStateOf<AppLatestRelease?>(null) }
+    var updateFailure by remember { mutableStateOf<io.github.mangi.eta.data.update.UpdateFailureKind?>(null) }
     val checkForUpdate: () -> Unit = {
         if (!checkingUpdate) {
             checkingUpdate = true
             coroutineScope.launch {
-                val release = runCatching {
-                    withContext(Dispatchers.IO) { AppUpdateChecker.fetchLatest() }
-                }.getOrNull()
+                val result = try {
+                    Result.success(withContext(Dispatchers.IO) { AppUpdateChecker.fetchLatest(appVersionName) })
+                } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                    checkingUpdate = false
+                    throw cancelled
+                } catch (error: Exception) {
+                    Result.failure(error)
+                }
+                val release = result.getOrNull()
                 checkingUpdate = false
                 when {
-                    release == null -> Toast.makeText(
-                        context.applicationContext,
-                        context.getString(R.string.ui_update_check_failed),
-                        Toast.LENGTH_SHORT,
-                    ).show()
-                    AppUpdateChecker.isNewer(release.version, appVersionName) -> availableUpdate = release
+                    result.isFailure -> {
+                        updateFailure = io.github.mangi.eta.data.update.UpdateCheckFailure.kind(result.exceptionOrNull()!!)
+                    }
+                    release != null -> availableUpdate = release
                     else -> Toast.makeText(
                         context.applicationContext,
-                        context.getString(R.string.ui_update_already_latest),
+                        PersonalDistribution.noCompatibleRelease(appLocale.language, traditional),
                         Toast.LENGTH_SHORT,
                     ).show()
                 }
@@ -244,11 +257,20 @@ private fun SettingsPageContent(
     }
 
     // Provider / Model 选中状态展示
-    val providers by ProviderRepository.providersFlow().collectAsState(initial = emptyList())
-    val selectedProviderId by RuntimeConfigRepository.selectedProviderIdFlow()
-        .collectAsState(initial = null)
-    val selectedModelId by RuntimeConfigRepository.selectedModelIdFlow()
-        .collectAsState(initial = null)
+    // Keep cold flows stable across recompositions. Provider mapping/sorting belongs off Main;
+    // stopped settings pages should not continue collecting DataStore/Room updates.
+    val providersFlow = remember {
+        ProviderRepository.providersFlow().distinctUntilChanged().flowOn(Dispatchers.Default)
+    }
+    val selectedProviderFlow = remember {
+        RuntimeConfigRepository.selectedProviderIdFlow().distinctUntilChanged()
+    }
+    val selectedModelFlow = remember {
+        RuntimeConfigRepository.selectedModelIdFlow().distinctUntilChanged()
+    }
+    val providers by providersFlow.collectAsStateWithLifecycle(initialValue = emptyList())
+    val selectedProviderId by selectedProviderFlow.collectAsStateWithLifecycle(initialValue = null)
+    val selectedModelId by selectedModelFlow.collectAsStateWithLifecycle(initialValue = null)
     val selectedProvider = remember(providers, selectedProviderId) {
         providers.find { it.id == selectedProviderId }
     }
@@ -261,7 +283,7 @@ private fun SettingsPageContent(
 
     // prefs 绑定到 XposedService：service 到达时切换到 RemotePreferences（跨进程提交到
     // LSPosed 数据库）；未就绪时保持 null，UI 禁止修改。
-    var prefs by remember { mutableStateOf(Prefs.remotePreferencesForUi(EtaApp.serviceInstance)) }
+    var prefs by remember { mutableStateOf<SharedPreferences?>(null) }
     val agentPrefs = remember { Prefs.localAgentPreferences() }
     val pickerState = remember(providers, selectedProviderId, selectedModelId) {
         AgentModelPickerProjector.project(providers, selectedProviderId, selectedModelId)
@@ -450,22 +472,33 @@ private fun SettingsPageContent(
         targetPrefs.registerOnSharedPreferenceChangeListener(listener)
         onDispose { targetPrefs.unregisterOnSharedPreferenceChangeListener(listener) }
     }
-    DisposableEffect(Unit) {
+    DisposableEffect(enhancementHistory) {
+        var refreshJob: Job? = null
         val listener = object : EtaApp.ServiceStateListener {
             override fun onServiceStateChanged(service: io.github.libxposed.service.XposedService?) {
-                prefs = Prefs.remotePreferencesForUi(service)
-                prefs?.let { connected ->
-                    enhancementHistory.captureConnected(connected)
-                    hasConnectedFramework = true
-                }
-                Prefs.reconcileAgentPreferences(service)
-                coroutineScope.launch {
-                    RuntimeConfigRepository.ensureDefaults(service)
+                refreshJob?.cancel()
+                refreshJob = coroutineScope.launch {
+                    // Disable stale RemotePreferences immediately, then do Binder/disk work off Main.
+                    prefs = null
+                    val connected = withContext(Dispatchers.IO) {
+                        val remote = Prefs.remotePreferencesForUi(service)
+                        remote?.let(enhancementHistory::captureConnected)
+                        Prefs.reconcileAgentPreferences(service)
+                        remote
+                    }
+                    // withContext checks cancellation: a replaced/disconnected service cannot
+                    // publish an old handle after a slow Binder call returns.
+                    prefs = connected
+                    if (connected != null) hasConnectedFramework = true
+                    withContext(Dispatchers.IO) { RuntimeConfigRepository.ensureDefaults(service) }
                 }
             }
         }
         EtaApp.addServiceStateListener(listener, notifyImmediately = true)
-        onDispose { EtaApp.removeServiceStateListener(listener) }
+        onDispose {
+            EtaApp.removeServiceStateListener(listener)
+            refreshJob?.cancel()
+        }
     }
     val powerAssistantTargets = PowerAssistantTarget.entries
     val powerAssistantItems = powerAssistantTargets.map { target ->
@@ -547,7 +580,7 @@ private fun SettingsPageContent(
                     CouiPreference(
                         title = stringResource(R.string.ui_model_provider_e8c7f5),
                         summary = providerSummary,
-                        icon = { CouiSettingsIcon(Icons.Rounded.Cloud, SettingsIconColors.Blue) },
+                        icon = { CleanupIconTile(Icons.Rounded.Cloud, SettingsIconColors.Blue) },
                         onClick = { onNavigate(AppRoute.ModelProviders) },
                     )
                     CouiIconDivider()
@@ -567,7 +600,7 @@ private fun SettingsPageContent(
                             selectedIndex = selectedEffortIndex,
                             onSelectedIndexChange = onDefaultEffortSelect,
                             icon = {
-                                CouiSettingsIcon(
+                                CleanupIconTile(
                                     icon = Icons.Rounded.Tune,
                                     tint = SettingsIconColors.Blue,
                                     enabled = defaultEffortEnabled,
@@ -580,7 +613,7 @@ private fun SettingsPageContent(
                             title = defaultEffortTitle,
                             summary = defaultEffortUnsupported,
                             icon = {
-                                CouiSettingsIcon(
+                                CleanupIconTile(
                                     icon = Icons.Rounded.Tune,
                                     tint = SettingsIconColors.Blue,
                                     enabled = false,
@@ -592,7 +625,9 @@ private fun SettingsPageContent(
                     }
                 }
 
-                Group(title = stringResource(R.string.settings_context_extensions)) {
+                Group(title = stringResource(R.string.cleanup_prompts_extensions)) {
+                    CleanupSettingsRow(CleanupSettingsEntry(R.string.prompt_studio_title, AppRoute.PromptStudio, Icons.Rounded.Code, SettingsIconColors.Orange), onNavigate)
+                    CouiIconDivider()
                     SwitchPref(
                         context = context,
                         prefs = agentPrefs,
@@ -604,14 +639,14 @@ private fun SettingsPageContent(
                     CouiIconDivider()
                     CouiPreference(
                         title = stringResource(R.string.conversation_title_settings_title),
-                        icon = { CouiSettingsIcon(Icons.Rounded.AutoAwesome, SettingsIconColors.Blue) },
+                        icon = { CleanupIconTile(Icons.Rounded.AutoAwesome, SettingsIconColors.Blue) },
                         onClick = { onNavigate(AppRoute.ConversationTitleSettings) },
                     )
                     CouiIconDivider()
                     CouiPreference(
                         title = stringResource(R.string.ui_memory_b55ff5),
                         icon = {
-                            CouiSettingsIcon(
+                            CleanupIconTile(
                                 Icons.AutoMirrored.Rounded.MenuBook,
                                 SettingsIconColors.Orange,
                             )
@@ -621,14 +656,14 @@ private fun SettingsPageContent(
                     CouiIconDivider()
                     CouiPreference(
                         title = "Subagent",
-                        icon = { CouiSettingsIcon(Icons.Rounded.Hub, SettingsIconColors.Blue) },
+                        icon = { CleanupIconTile(Icons.Rounded.Hub, SettingsIconColors.Blue) },
                         onClick = { onNavigate(AppRoute.Subagents) },
                     )
                     CouiIconDivider()
                     CouiPreference(
                         title = stringResource(R.string.route_skills),
                         icon = {
-                            CouiSettingsIcon(
+                            CleanupIconTile(
                                 Icons.Rounded.ImportContacts,
                                 SettingsIconColors.Green,
                             )
@@ -639,7 +674,7 @@ private fun SettingsPageContent(
                     CouiPreference(
                         title = stringResource(R.string.route_mcp_servers),
                         icon = {
-                            CouiSettingsIcon(
+                            CleanupIconTile(
                                 Icons.Rounded.AccountTree,
                                 SettingsIconColors.Blue,
                             )
@@ -650,7 +685,7 @@ private fun SettingsPageContent(
                     CouiPreference(
                         title = "角色",
                         icon = {
-                            CouiSettingsIcon(
+                            CleanupIconTile(
                                 Icons.Rounded.SportsBar,
                                 SettingsIconColors.Orange,
                             )
@@ -661,15 +696,15 @@ private fun SettingsPageContent(
 
                 Group(title = stringResource(R.string.ui_tool_a72ef1)) {
                     CouiPreference(
-                        title = stringResource(R.string.settings_tools_list),
-                        icon = { CouiSettingsIcon(Icons.Rounded.Dashboard, SettingsIconColors.Green) },
+                        title = stringResource(R.string.compact_tools_title),
+                        icon = { CleanupIconTile(Icons.Rounded.Dashboard, SettingsIconColors.Green) },
                         onClick = { onNavigate(AppRoute.Tools) },
                     )
                     CouiIconDivider()
                     CouiPreference(
                         title = stringResource(R.string.web_tools_settings_title),
                         icon = {
-                            CouiSettingsIcon(
+                            CleanupIconTile(
                                 Icons.Rounded.TravelExplore,
                                 SettingsIconColors.Blue,
                             )
@@ -677,19 +712,10 @@ private fun SettingsPageContent(
                         onClick = { onNavigate(AppRoute.WebToolsSettings) },
                     )
                     CouiIconDivider()
-                    SwitchPref(
-                        context = context,
-                        prefs = agentPrefs,
-                        title = stringResource(R.string.settings_virtual_display_title),
-                        key = Prefs.Keys.AGENT_VIRTUAL_DISPLAY_ENABLED,
-                        icon = Icons.Rounded.Layers,
-                        iconTint = SettingsIconColors.Blue,
-                    )
-                    CouiIconDivider()
                     CouiPreference(
                         title = stringResource(R.string.ui_linux_tool_environment_314d22),
                         icon = {
-                            CouiSettingsIcon(
+                            CleanupIconTile(
                                 Icons.Rounded.Inventory2,
                                 SettingsIconColors.Orange,
                             )
@@ -701,7 +727,7 @@ private fun SettingsPageContent(
                 Group {
                     CouiPreference(
                         title = stringResource(R.string.capability_enhancements),
-                        icon = { CouiSettingsIcon(Icons.Rounded.Security, SettingsIconColors.Blue) },
+                        icon = { CleanupIconTile(Icons.Rounded.Security, SettingsIconColors.Blue) },
                         onClick = { onNavigate(AppRoute.SystemEnhance) },
                     )
                 }
@@ -716,7 +742,7 @@ private fun SettingsPageContent(
                             pageColors.summary
                         },
                         icon = {
-                            CouiSettingsIcon(
+                            CleanupIconTile(
                                 Icons.Rounded.SupportAgent,
                                 SettingsIconColors.Green,
                             )
@@ -727,7 +753,7 @@ private fun SettingsPageContent(
                     CouiPreference(
                         title = stringResource(R.string.assistant_overlay_settings_title),
                         icon = {
-                            CouiSettingsIcon(
+                            CleanupIconTile(
                                 Icons.Rounded.ChatBubble,
                                 SettingsIconColors.Blue,
                             )
@@ -742,7 +768,7 @@ private fun SettingsPageContent(
                             selectedIndex = powerAssistantTargets.indexOf(powerAssistantTarget),
                             onSelectedIndexChange = onPowerTargetSelect,
                             icon = {
-                                CouiSettingsIcon(
+                                CleanupIconTile(
                                     icon = Icons.Rounded.PowerSettingsNew,
                                     tint = SettingsIconColors.Yellow,
                                     enabled = prefs != null,
@@ -796,32 +822,21 @@ private fun SettingsPageContent(
                     CouiIconDivider()
                     CouiPreference(
                         title = stringResource(R.string.appearance_title),
-                        icon = { CouiSettingsIcon(Icons.Rounded.Palette, SettingsIconColors.Orange) },
+                        icon = { CleanupIconTile(Icons.Rounded.Palette, SettingsIconColors.Orange) },
                         onClick = { onNavigate(AppRoute.AppearanceSettings) },
                     )
                     CouiIconDivider()
                     CouiPreference(
                         title = stringResource(R.string.speech_settings_title),
-                        icon = { CouiSettingsIcon(Icons.Rounded.Mic, SettingsIconColors.Blue) },
+                        icon = { CleanupIconTile(Icons.Rounded.Mic, SettingsIconColors.Blue) },
                         onClick = { onNavigate(AppRoute.SpeechSettings) },
                     )
                     CouiIconDivider()
                     LanguagePreference(
                         iconTint = SettingsIconColors.Blue,
                         startAction = {
-                            CouiSettingsIcon(Icons.Rounded.Language, SettingsIconColors.Blue)
+                            CleanupIconTile(Icons.Rounded.Language, SettingsIconColors.Blue)
                         },
-                    )
-                    CouiIconDivider()
-                    CouiPreference(
-                        title = stringResource(R.string.data_backup_title),
-                        icon = {
-                            CouiSettingsIcon(
-                                Icons.Rounded.Description,
-                                SettingsIconColors.Blue,
-                            )
-                        },
-                        onClick = { onNavigate(AppRoute.DataBackup) },
                     )
                 }
 
@@ -832,19 +847,8 @@ private fun SettingsPageContent(
                             if (overlayGranted) R.string.status_authorized else R.string.status_unauthorized,
                         ),
                         valueColor = if (overlayGranted) pageColors.summary else dialogColors.destructive,
-                        icon = { CouiSettingsIcon(Icons.Rounded.Layers, SettingsIconColors.Blue) },
-                        onClick = {
-                            if (!overlayGranted) {
-                                runCatching {
-                                    context.startActivity(
-                                        Intent(
-                                            Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                                            Uri.parse("package:${context.packageName}"),
-                                        ),
-                                    )
-                                }
-                            }
-                        },
+                        icon = { CleanupIconTile(Icons.Rounded.Layers, SettingsIconColors.Blue) },
+                        onClick = { OverlayPermissionNavigation.open(context) },
                     )
                     CouiIconDivider()
                     val accEnabled = accessibilityGranted || AgentAccessibilityService.isAvailable()
@@ -855,7 +859,7 @@ private fun SettingsPageContent(
                         ),
                         valueColor = if (accEnabled) pageColors.summary else pageColors.accent,
                         icon = {
-                            CouiSettingsIcon(
+                            CleanupIconTile(
                                 Icons.Rounded.AccessibilityNew,
                                 SettingsIconColors.Blue,
                             )
@@ -873,7 +877,7 @@ private fun SettingsPageContent(
                             checked = accessibilityProtectionEnabled,
                             onCheckedChange = onAccessibilityProtectionToggle,
                             icon = {
-                                CouiSettingsIcon(
+                                CleanupIconTile(
                                     icon = Icons.Rounded.VerifiedUser,
                                     tint = SettingsIconColors.Blue,
                                     enabled = prefs != null && !accessibilityProtectionPending,
@@ -907,12 +911,18 @@ private fun SettingsPageContent(
                 }
 
 
+                CleanupSettingsGroups().forEach { section ->
+                    Group(title = stringResource(section.title)) {
+                        CleanupSettingsRows(section.entries, onNavigate)
+                    }
+                }
+
                 Group(title = stringResource(R.string.ui_about_bed172)) {
                     CouiPreference(
                         title = stringResource(R.string.ui_about_version_title),
                         summary = appVersionSummary,
-                        icon = { CouiSettingsIcon(Icons.Rounded.Info, SettingsIconColors.Blue) },
-                        showChevron = false,
+                        icon = { CleanupIconTile(Icons.Rounded.Info, SettingsIconColors.Blue) },
+                        onClick = { showVersionDetails = true },
                     )
                     CouiIconDivider()
                     CouiPreference(
@@ -923,7 +933,7 @@ private fun SettingsPageContent(
                             null
                         },
                         icon = {
-                            CouiSettingsIcon(
+                            CleanupIconTile(
                                 icon = Icons.Rounded.SystemUpdate,
                                 tint = SettingsIconColors.Green,
                                 enabled = !checkingUpdate,
@@ -936,19 +946,19 @@ private fun SettingsPageContent(
                     CouiPreference(
                         title = stringResource(R.string.ui_about_feedback_title),
                         icon = {
-                            CouiSettingsIcon(
+                            CleanupIconTile(
                                 Icons.Rounded.BugReport,
                                 SettingsIconColors.Orange,
                             )
                         },
-                        onClick = { openUrl("https://github.com/Mangi-11/Eta/issues") },
+                        onClick = { openUrl(PersonalDistribution.FEEDBACK_URL) },
                     )
                     CouiIconDivider()
                     CouiPreference(
                         title = stringResource(R.string.ui_about_github_star_title),
-                        summary = stringResource(R.string.ui_about_github_star_hint),
-                        icon = { CouiSettingsIcon(Icons.Rounded.Code, SettingsIconColors.Blue) },
-                        onClick = { openUrl("https://github.com/Mangi-11/Eta") },
+                        summary = stringResource(R.string.personal_source_scope),
+                        icon = { CleanupIconTile(Icons.Rounded.Code, SettingsIconColors.Blue) },
+                        onClick = { openUrl(PersonalDistribution.REPOSITORY_URL) },
                     )
                 }
 
@@ -1008,8 +1018,9 @@ private fun SettingsPageContent(
                 }
 
                 item(key = "section_context_extensions") {
-                    SmallTitle(stringResource(R.string.settings_context_extensions))
+                    SmallTitle(stringResource(R.string.cleanup_prompts_extensions))
                     SettingsGroupCard {
+                        CleanupSettingsRow(CleanupSettingsEntry(R.string.prompt_studio_title, AppRoute.PromptStudio, Icons.Rounded.Code, SettingsIconColors.Orange), onNavigate)
                         SwitchPref(
                             context = context,
                             prefs = agentPrefs,
@@ -1054,7 +1065,7 @@ private fun SettingsPageContent(
                     SmallTitle(stringResource(R.string.ui_tool_a72ef1))
                     SettingsGroupCard {
                         ArrowPreference(
-                            title = stringResource(R.string.settings_tools_list),
+                            title = stringResource(R.string.compact_tools_title),
                             startAction = { SettingsIcon(Icons.Rounded.Dashboard) },
                             onClick = { onNavigate(AppRoute.Tools) },
                         )
@@ -1062,13 +1073,6 @@ private fun SettingsPageContent(
                             title = stringResource(R.string.web_tools_settings_title),
                             startAction = { SettingsIcon(Icons.Rounded.TravelExplore) },
                             onClick = { onNavigate(AppRoute.WebToolsSettings) },
-                        )
-                        SwitchPref(
-                            context = context,
-                            prefs = agentPrefs,
-                            title = stringResource(R.string.settings_virtual_display_title),
-                            key = Prefs.Keys.AGENT_VIRTUAL_DISPLAY_ENABLED,
-                            icon = Icons.Rounded.Layers,
                         )
                         ArrowPreference(
                             title = stringResource(R.string.ui_linux_tool_environment_314d22),
@@ -1182,11 +1186,6 @@ private fun SettingsPageContent(
                         LanguagePreference(
                             startAction = { SettingsIcon(Icons.Rounded.Language) },
                         )
-                        ArrowPreference(
-                            title = stringResource(R.string.data_backup_title),
-                            startAction = { SettingsIcon(Icons.Rounded.Description) },
-                            onClick = { onNavigate(AppRoute.DataBackup) },
-                        )
                     }
                 }
 
@@ -1209,18 +1208,7 @@ private fun SettingsPageContent(
                                     },
                                 )
                             },
-                            onClick = {
-                                if (!overlayGranted) {
-                                    runCatching {
-                                        context.startActivity(
-                                            Intent(
-                                                Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                                                Uri.parse("package:${context.packageName}"),
-                                            ),
-                                        )
-                                    }
-                                }
-                            },
+                            onClick = { OverlayPermissionNavigation.open(context) },
                         )
                         ArrowPreference(
                             title = stringResource(R.string.ui_accessibility_enhancement_tools_8fd257),
@@ -1289,6 +1277,13 @@ private fun SettingsPageContent(
                 }
 
 
+                CleanupSettingsGroups().forEach { section ->
+                    item(key = "cleanup_${section.title}") {
+                        SmallTitle(stringResource(section.title))
+                        SettingsGroupCard { CleanupSettingsRows(section.entries, onNavigate) }
+                    }
+                }
+
                 item(key = "section_about") {
                     SmallTitle(stringResource(R.string.ui_about_bed172))
                     SettingsGroupCard {
@@ -1296,6 +1291,7 @@ private fun SettingsPageContent(
                             title = stringResource(R.string.ui_about_version_title),
                             summary = appVersionSummary,
                             startAction = { SettingsIcon(Icons.Rounded.Info) },
+                            onClick = { showVersionDetails = true },
                         )
                         ArrowPreference(
                             title = stringResource(R.string.ui_about_update_title),
@@ -1316,18 +1312,47 @@ private fun SettingsPageContent(
                         ArrowPreference(
                             title = stringResource(R.string.ui_about_feedback_title),
                             startAction = { SettingsIcon(Icons.Rounded.BugReport) },
-                            onClick = { openUrl("https://github.com/Mangi-11/Eta/issues") },
+                            onClick = { openUrl(PersonalDistribution.FEEDBACK_URL) },
                         )
                         ArrowPreference(
                             title = stringResource(R.string.ui_about_github_star_title),
-                            summary = stringResource(R.string.ui_about_github_star_hint),
+                            summary = stringResource(R.string.personal_source_scope),
                             startAction = { SettingsIcon(Icons.Rounded.Code) },
-                            onClick = { openUrl("https://github.com/Mangi-11/Eta") },
+                            onClick = { openUrl(PersonalDistribution.REPOSITORY_URL) },
                         )
                     }
                 }
             }
         }
+    }
+
+    if (showVersionDetails) {
+        SelectionCopyDialog(
+            text = PersonalDistribution.buildDetails(
+                appVersionName, appPackageInfo.longVersionCode,
+                io.github.mangi.eta.BuildConfig.SOURCE_REVISION,
+                io.github.mangi.eta.BuildConfig.SOURCE_TREE_STATE,
+            ),
+            onDismiss = { showVersionDetails = false },
+        )
+    }
+
+    updateFailure?.let { failure ->
+        val detail = when (failure) {
+            io.github.mangi.eta.data.update.UpdateFailureKind.RATE_LIMIT -> R.string.refine_update_rate_limit
+            io.github.mangi.eta.data.update.UpdateFailureKind.DNS -> R.string.refine_update_dns
+            io.github.mangi.eta.data.update.UpdateFailureKind.TLS -> R.string.refine_update_tls
+            io.github.mangi.eta.data.update.UpdateFailureKind.TIMEOUT -> R.string.refine_update_timeout
+            io.github.mangi.eta.data.update.UpdateFailureKind.HTTP -> R.string.refine_update_http
+            io.github.mangi.eta.data.update.UpdateFailureKind.INVALID_RESPONSE -> R.string.refine_update_response
+            else -> R.string.refine_update_network
+        }
+        io.github.mangi.eta.ui.components.EtaReadOnlyDialog(
+            title = stringResource(R.string.ui_update_check_failed),
+            copyAllText = stringResource(R.string.refine_open_releases),
+            onDismissRequest = { updateFailure = null },
+            onCopyAll = { updateFailure = null; openUrl(PersonalDistribution.RELEASES_URL) },
+        ) { Text(stringResource(detail), color = MiuixTheme.colorScheme.onSurface) }
     }
 
     availableUpdate?.let { update ->
@@ -1336,7 +1361,7 @@ private fun SettingsPageContent(
                 CouiConfirmDialog(
                     visible = true,
                     title = stringResource(R.string.ui_update_available_title),
-                    message = stringResource(R.string.ui_update_available_message, update.version, appVersionName),
+                    message = stringResource(R.string.ui_update_available_message, update.version, appVersionSummary),
                     confirmText = stringResource(R.string.ui_update_go_download),
                     onConfirm = {
                         availableUpdate = null
@@ -1349,7 +1374,7 @@ private fun SettingsPageContent(
                 WindowDialog(
                     show = true,
                     title = stringResource(R.string.ui_update_available_title),
-                    summary = stringResource(R.string.ui_update_available_message, update.version, appVersionName),
+                    summary = stringResource(R.string.ui_update_available_message, update.version, appVersionSummary),
                     onDismissRequest = { availableUpdate = null },
                 ) {
                     MiuixDialogActions(
@@ -1375,14 +1400,14 @@ private fun AssistantRoleStatus.displayValue(): String = when (owner) {
 }
 
 @Composable
-private fun SwitchPref(
+internal fun SwitchPref(
     context: Context,
     prefs: SharedPreferences?,
     title: String,
     summary: String? = null,
     key: String,
     icon: ImageVector,
-    iconTint: Color = Color.Unspecified,
+    iconTint: Color = settingsIconTint(icon),
 ) {
     val enabled = prefs != null
     val history = remember(context.applicationContext) { EnhancementSettingsHistory(context) }
@@ -1426,7 +1451,7 @@ private fun SwitchPref(
                 summary = summary,
                 checked = checked,
                 onCheckedChange = onToggle,
-                icon = { CouiSettingsIcon(icon = icon, tint = iconTint, enabled = enabled) },
+                icon = { CleanupIconTile(icon = icon, tint = iconTint, enabled = enabled) },
                 enabled = enabled,
             )
         }
@@ -1437,7 +1462,7 @@ private fun SwitchPref(
                 checked = checked,
                 onCheckedChange = onToggle,
                 startAction = {
-                    SettingsIcon(icon = icon, enabled = enabled)
+                    SettingsIcon(icon = icon, enabled = enabled, tint = iconTint)
                 },
                 enabled = enabled,
             )
@@ -1476,4 +1501,52 @@ private fun isAgentAccessibilityEnabled(context: Context): Boolean {
         Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES,
     ).orEmpty()
     return enabledServices.split(':').any { it.equals(expected, ignoreCase = true) }
+}
+
+@Composable
+internal fun FluidNotificationSettings(pinned: Boolean) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val settingsFlow = remember { SettingsDataStore.settingsFlow().distinctUntilChanged() }
+    val loadedSettings by settingsFlow.collectAsStateWithLifecycle(initialValue = null)
+    val current = loadedSettings ?: return
+    val change: (Boolean, Boolean) -> Unit = { pinned, value ->
+        scope.launch {
+            try {
+                SettingsDataStore.updateSettings {
+                    if (pinned) it.copy(overlayFluidPinned = value) else it.copy(overlayFluidDowngrade = value)
+                }
+                // Update the in-process notification policy only after persistence
+                // succeeds, so failed writes cannot silently alter the live policy.
+                if (!pinned) {
+                    io.github.mangi.eta.agent.runtime.FluidNotificationPolicy.set(value)
+                    io.github.mangi.eta.agent.runtime.RunProgressNotifier.refreshFluidPolicy(context, current.overlayFluidPinned)
+                }
+                runCatching {
+                    context.startService(Intent(context, io.github.mangi.eta.agent.runtime.AgentRuntimeService::class.java)
+                        .setAction(io.github.mangi.eta.agent.runtime.AgentRuntimeService.ACTION_REFRESH_FLUID))
+                }
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (failure: Exception) {
+                Toast.makeText(context, R.string.settings_write_failed, Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+    run {
+        val title = stringResource(if (pinned) R.string.cleanup_fluid_idle else R.string.cleanup_fluid_running)
+        val summary = stringResource(if (pinned) R.string.cleanup_fluid_idle_summary else R.string.cleanup_fluid_running_summary)
+        // The task-facing switch is positive; the stored field is the existing inverse downgrade policy.
+        val checked = if (pinned) current.overlayFluidPinned else !current.overlayFluidDowngrade
+        val onChange: (Boolean) -> Unit = { change(pinned, if (pinned) it else !it) }
+        if (LocalUiStyle.current == AppearanceUiStyle.COUI) {
+            CouiSwitchPreference(title = title, summary = summary, checked = checked,
+                icon = { CleanupIconTile(Icons.Rounded.Cloud, SettingsIconColors.Blue) },
+                onCheckedChange = onChange)
+        } else {
+            SwitchPreference(title = title, summary = summary, checked = checked,
+                startAction = { SettingsIcon(Icons.Rounded.Cloud) },
+                onCheckedChange = onChange)
+        }
+    }
 }

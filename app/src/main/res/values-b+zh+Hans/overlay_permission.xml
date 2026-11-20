@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="overlay_permission_choose_app">系统已打开悬浮窗权限列表，请选择 Eta 并检查权限。</string>
+    <string name="overlay_permission_details_fallback">无法直接打开悬浮窗权限页，已转到 Eta 应用信息。请查找“显示在其他应用上层”，或在系统设置中搜索 Eta 的悬浮窗权限。</string>
+    <string name="overlay_permission_open_failed">无法打开悬浮窗权限设置。请前往系统设置 → 应用 → 特殊应用权限 → 显示在其他应用上层 → Eta。</string>
+</resources>

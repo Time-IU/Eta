@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Original QF monogram for Qianfan; not an official logo. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="48dp" android:height="48dp"
+    android:viewportWidth="48" android:viewportHeight="48">
+    <path android:fillColor="#2457C5"
+        android:pathData="M24,0 A24,24 0,1 1,24,48 A24,24 0,1 1,24,0" />
+    <path android:fillColor="#FFFFFF" android:fillType="evenOdd"
+        android:pathData="M9,15 H22 V32 H9 Z M12,18 V29 H19 V18 Z M17,27 L25,35 L23,37 L15,29 Z M28,15 H40 V19 H32 V23 H39 V27 H32 V33 H28 Z" />
+</vector>

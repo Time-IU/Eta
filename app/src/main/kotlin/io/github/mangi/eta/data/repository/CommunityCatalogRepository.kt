@@ -68,7 +68,7 @@ internal object CommunityCatalogRepository {
             val request = Request.Builder()
                 .url(CATALOG_URL)
                 .header("Accept", "application/json")
-                .header("User-Agent", "Eta-Model-Catalog (+https://github.com/Mangi-11/Eta)")
+                .header("User-Agent", "Eta-Model-Catalog (+https://github.com/Oo0520/Eta-por)")
                 .get()
                 .build()
             // 目录请求不读取也不转发任何已保存的模型服务 API Key。
@@ -121,7 +121,8 @@ internal object CommunityCatalogRepository {
             id = UUID.randomUUID().toString(),
             name = selection.name,
             baseUrl = selection.baseUrl,
-            isEnabled = false,
+            // 用户主动导入就是要用它；默认关闭会导致「导入了却在模型面板里看不到」。
+            isEnabled = true,
             models = models.mapIndexed { index, model ->
                 Model(
                     id = UUID.randomUUID().toString(),

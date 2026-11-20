@@ -40,6 +40,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.VolumeOff
 import androidx.compose.material.icons.automirrored.rounded.VolumeUp
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Close
@@ -56,6 +57,7 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.State
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
@@ -95,6 +97,7 @@ import io.github.mangi.eta.agent.voice.EtaSpeechPhase
 import io.github.mangi.eta.agent.voice.ReadAloudPlaybackService
 import io.github.mangi.eta.agent.voice.SpeechInputController
 import io.github.mangi.eta.agent.voice.SpeechPlaybackController
+import io.github.mangi.eta.agent.voice.SpeechPlaybackState
 import io.github.mangi.eta.data.model.TtsProvider
 import io.github.mangi.eta.data.repository.SpeechSettingsRepository
 import io.github.mangi.eta.ui.MainActivity
@@ -104,6 +107,7 @@ import io.github.mangi.eta.ui.model.SystemNoticeCode
 import io.github.mangi.eta.ui.model.SystemNoticeMessageUi
 import io.github.mangi.eta.ui.components.AnswerActionButton
 import io.github.mangi.eta.ui.components.ChatActionIcons
+import io.github.mangi.eta.ui.components.AnswerActionSize
 import io.github.mangi.eta.ui.components.ChatInputActionIconSize
 import io.github.mangi.eta.ui.components.ChatInputActionSize
 import io.github.mangi.eta.ui.components.StatusError
@@ -667,6 +671,13 @@ internal fun SpeechInputFeedback(
                     )
                 }
             } else if (!state.active) {
+                if (state.downloadAvailable) {
+                    SpeechFeedbackAction(
+                        text = stringResource(R.string.voice_download_model),
+                        primary = true,
+                        onClick = controller::downloadModel,
+                    )
+                }
                 if (state.configureAvailable) {
                     SpeechFeedbackAction(
                         text = stringResource(R.string.speech_open_settings),
@@ -674,7 +685,7 @@ internal fun SpeechInputFeedback(
                         onClick = { openSpeechSettings(context) },
                     )
                 }
-                IconButton(onClick = controller::cancel, minWidth = 28.dp, minHeight = 28.dp) {
+                IconButton(onClick = controller::cancel, minWidth = 36.dp, minHeight = 36.dp) {
                     Icon(
                         imageVector = Icons.Rounded.Close,
                         contentDescription = stringResource(R.string.action_cancel),
@@ -787,7 +798,11 @@ internal fun SpeechAutoReadAloud(messages: List<AgentChatMessageUi>, isStreaming
         val interrupted = list.drop(answerIndex + 1).any {
             it is SystemNoticeMessageUi && it.code in setOf(SystemNoticeCode.Stopped, SystemNoticeCode.RuntimeFailed)
         }
-        if (!interrupted && answer.content.isNotBlank()) controller.speak(answer.id, answer.content)
+        // resume = true：一次回答可能分几段收尾，这里会触发好几次；
+        // 接着上次读完的位置往下念，不从头重来（手动点朗读按钮仍然是完整重念）。
+        if (!interrupted && answer.content.isNotBlank()) {
+            controller.speak(answer.id, answer.content, resume = true)
+        }
     }
     // 关闭自动朗读视同“别再读了”，正在进行的朗读一并停止。
     var wasEnabled by remember { mutableStateOf(enabled) }
@@ -795,6 +810,29 @@ internal fun SpeechAutoReadAloud(messages: List<AgentChatMessageUi>, isStreaming
         if (wasEnabled && !enabled) controller.stop()
         wasEnabled = enabled
     }
+}
+
+/** 顶栏的自动朗读开关；未配置播报服务时不显示。 */
+@Composable
+internal fun SpeechAutoReadToggle() {
+    val scope = rememberCoroutineScope()
+    val settings by remember { SpeechSettingsRepository.settingsFlow() }.collectAsState(initial = null)
+    val current = settings ?: return
+    if (current.tts == TtsProvider.NONE) return
+    val on = current.chatAutoSpeak
+    IconButton(onClick = { scope.launch { SpeechSettingsRepository.save(current.copy(chatAutoSpeak = !on)) } }) {
+        Icon(
+            imageVector = if (on) Icons.AutoMirrored.Rounded.VolumeUp else Icons.AutoMirrored.Rounded.VolumeOff,
+            contentDescription = stringResource(if (on) R.string.speech_auto_read_on else R.string.speech_auto_read_off),
+            modifier = Modifier.size(22.dp),
+            tint = MiuixTheme.colorScheme.onSurface,
+        )
+    }
+}
+
+/** 朗读进度：正文按它高亮当前片段；没有宿主提供时保持空状态，等于不高亮。 */
+internal val LocalSpeechPlaybackProgress = staticCompositionLocalOf<State<SpeechPlaybackState>> {
+    mutableStateOf(SpeechPlaybackState())
 }
 
 /**
@@ -818,11 +856,13 @@ internal fun SpeechPlaybackHost(content: @Composable () -> Unit) {
         created
     }
     val settings by remember { SpeechSettingsRepository.settingsFlow() }.collectAsState(initial = null)
+    val playbackState = controller.state.collectAsState()
     DisposableEffect(controller) { onDispose { controller.stop() } }
     SpeechPlaybackErrors(controller)
     CompositionLocalProvider(
         LocalSpeechPlayback provides controller,
         LocalSpeechPlaybackEnabled provides (settings != null && settings?.tts != TtsProvider.NONE),
+        LocalSpeechPlaybackProgress provides playbackState,
         content = content,
     )
 }

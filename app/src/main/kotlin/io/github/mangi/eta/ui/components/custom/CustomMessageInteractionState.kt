@@ -1,6 +1,6 @@
 package io.github.mangi.eta.ui.components.custom
 
-/** Only a menu action can request selection; pointer long-press only opens the menu. */
+/** Explicit menu actions and a stationary body double tap request selection; long-press opens the menu. */
 internal data class CustomMessageInteractionState(
     val menuOpen: Boolean = false,
     val selecting: Boolean = false,

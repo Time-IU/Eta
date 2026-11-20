@@ -1,5 +1,13 @@
 package io.github.mangi.eta.ui.screens.home
 
+import io.github.mangi.eta.ui.model.ToolToggleKind
+import io.github.mangi.eta.ui.model.ToolAccessUiState
+import io.github.mangi.eta.ui.model.CommandPaletteUi
+import io.github.mangi.eta.ui.model.CommandResultUi
+import io.github.mangi.eta.ui.model.AgentCommand
+import io.github.mangi.eta.ui.app.AgentCommands
+import io.github.mangi.eta.agent.display.dashboard.AgentConfirmGuard
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.key
@@ -30,6 +38,15 @@ internal fun AgentHomeScreen(
     state: AgentChatHomeUiState,
     modelPickerState: AgentModelPickerUiState,
     conversationKey: String?,
+    searchOpenRequested: Boolean = false,
+    onSearchOpenConsumed: () -> Unit = {},
+    commands: List<AgentCommand> = AgentCommands.builtIns,
+    commandResult: CommandResultUi? = null,
+    commandPalette: CommandPaletteUi? = null,
+    isPaused: Boolean = false,
+    toolAccess: ToolAccessUiState = ToolAccessUiState(),
+    onRefreshToolAccess: () -> Unit = {},
+    onOpenModelProviders: () -> Unit = {},
     onAction: (AgentHomeAction) -> Unit,
     isLoadingConversation: Boolean = false,
     conversationLoadFailed: Boolean = false,
@@ -39,6 +56,9 @@ internal fun AgentHomeScreen(
     topInset: Dp = 0.dp,
     modifier: Modifier = Modifier,
 ) {
+    LaunchedEffect(conversationKey) {
+        AgentConfirmGuard.bindConversation(conversationKey.orEmpty())
+    }
     // key 内保持完整分支，避免提前返回遗留无法转换为 DEX 的编译器标记。
     key(chatConversationCompositionKey(conversationKey)) {
         if (!state.isConversationLoaded) {
@@ -58,6 +78,44 @@ internal fun AgentHomeScreen(
             ) {
                 AgentChatBody(
                     messages = state.messages,
+                    searchOpenRequested = searchOpenRequested,
+                    onSearchOpenConsumed = onSearchOpenConsumed,
+                    draftKey = conversationKey,
+                    onOpenModelProviders = onOpenModelProviders,
+                    commands = commands,
+                    commandResult = commandResult,
+                    commandPalette = commandPalette,
+                    onDismissCommandResult = { onAction(AgentHomeAction.DismissCommandResult) },
+                    onPickPaletteEntry = { onAction(AgentHomeAction.PickPaletteEntry(it.key)) },
+                    onCloseCommandPalette = { onAction(AgentHomeAction.CloseCommandPalette) },
+                    onLongPressPaletteEntry = { onAction(AgentHomeAction.ShowPaletteEntryDetail(it.key)) },
+                    commandConfirm = state.commandConfirm,
+                    inputResetToken = state.inputResetToken,
+                    onConfirmCommand = { onAction(AgentHomeAction.ConfirmAgentCommand) },
+                    onDismissCommandConfirm = { onAction(AgentHomeAction.DismissAgentCommandConfirm) },
+                    onQueueMessage = { onAction(AgentHomeAction.QueueMessage(it)) },
+                    isPaused = isPaused,
+                    onPause = { onAction(AgentHomeAction.PauseRun) },
+                    onResume = { onAction(AgentHomeAction.ResumeRun) },
+                    searchJump = state.searchJump,
+                    onSearchJumpConsumed = { onAction(AgentHomeAction.SearchJumpConsumed) },
+                    resumableRun = state.resumableRun,
+                    onResumeInterruptedRun = { onAction(AgentHomeAction.ResumeInterruptedRun) },
+                    onDismissInterruptedRun = { onAction(AgentHomeAction.DismissInterruptedRun) },
+                    onForkMessage = { onAction(AgentHomeAction.ForkMessage(it)) },
+                    onOpenNavigator = { onAction(AgentHomeAction.OpenConversationNavigator) },
+                    toolAccess = toolAccess,
+                    pendingMessageRefs = state.pendingMessageRefs,
+                    onAttachReference = { onAction(AgentHomeAction.AttachMessageReference(it)) },
+                    onRemoveReference = { onAction(AgentHomeAction.RemoveMessageReference(it)) },
+                    onRefreshToolAccess = onRefreshToolAccess,
+                    onToggleTool = { item, enabled ->
+                        when (item.kind) {
+                            ToolToggleKind.Mcp -> onAction(AgentHomeAction.ToggleMcpServer(item.id, enabled))
+                            ToolToggleKind.Skill -> onAction(AgentHomeAction.ToggleSkill(item.id, enabled))
+                        }
+                    },
+                    onOpenConversation = { onAction(AgentHomeAction.OpenConversation(it)) },
                     modelPickerState = modelPickerState,
                     topInset = topInset,
                     isCompacting = state.isCompacting,

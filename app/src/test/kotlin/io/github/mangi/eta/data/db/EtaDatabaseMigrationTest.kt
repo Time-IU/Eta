@@ -14,15 +14,15 @@ import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Test
 import org.junit.runner.RunWith
-import org.robolectric.RobolectricTestRunner
+import io.github.mangi.eta.testsupport.EtaRobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
 
-@RunWith(RobolectricTestRunner::class)
+@RunWith(EtaRobolectricTestRunner::class)
 @Config(sdk = [36])
 class EtaDatabaseMigrationTest {
     @Test
-    fun migration6To23PreservesDataAndMovesCompleteConversationContext() {
+    fun migration6To28PreservesDataAndMovesCompleteConversationContext() {
         val context = RuntimeEnvironment.getApplication() as Context
         val databaseName = "migration-${UUID.randomUUID()}.db"
         createVersion6Database(context, databaseName)
@@ -61,6 +61,7 @@ class EtaDatabaseMigrationTest {
                 EtaDatabase.MIGRATION_24_25,
                 EtaDatabase.MIGRATION_25_26,
                 EtaDatabase.MIGRATION_26_27,
+                EtaDatabase.MIGRATION_27_28,
             )
             .build()
         try {
@@ -165,6 +166,286 @@ class EtaDatabaseMigrationTest {
             database.close()
             context.deleteDatabase(databaseName)
         }
+    }
+
+    @Test
+    fun upstreamVersion22KeepsBoundModelAndGainsTaskAndUsageTables() = verifyLegacyUpgrade(22)
+
+    @Test
+    fun custom5Version24KeepsPinsAndModelBinding() = verifyLegacyUpgrade(24)
+
+    @Test
+    fun custom5Version27KeepsAllExistingMetricsAndAddsIncomingSchema() = verifyLegacyUpgrade(27)
+
+    @Test
+    fun backupPinAliasAndBothMetricFamiliesRoundTripWithoutLosingFields() {
+        val json = kotlinx.serialization.json.Json { ignoreUnknownKeys = true; encodeDefaults = true }
+        val imported = json.decodeFromString<ConversationEntity>(
+            """{"id":"backup","title":"Kept","thinkingEnabled":false,"createdAt":1,"updatedAt":2,"pinned":true,"categoryId":"category","parentConversationId":"parent","parentMessageId":"fork","branchRootId":"root"}""",
+        )
+        assertEquals(true, imported.isPinned)
+        assertEquals("category", imported.categoryId)
+        assertEquals("fork", imported.parentMessageId)
+        assertEquals(imported, json.decodeFromString<ConversationEntity>(json.encodeToString(ConversationEntity.serializer(), imported)))
+        val message = ConversationMessageEntity(id = "message", conversationId = "backup", sortIndex = 0,
+            type = "assistant", content = "Kept", cacheWriteTokens = 12, compactionArchiveId = "archive",
+            stepCount = 2, llmMs = 200, toolMs = 30, ttftMs = 10, ttftSteps = 2,
+            decodeMs = 190, decodeTokens = 20, requestDurationMs = 240,
+            systemPromptTokens = 30, toolDefinitionTokens = 40, conversationTokens = 50,
+            firstTokenMs = 11, toolDurationMs = 31, requestCount = 2, createdAt = 123)
+        assertEquals(message, json.decodeFromString<ConversationMessageEntity>(
+            json.encodeToString(ConversationMessageEntity.serializer(), message)))
+    }
+
+    @Test
+    fun identityProjectionAndLoadedUpsertPreserveCategoryAndForkMetadata() = runBlocking {
+        val context = RuntimeEnvironment.getApplication() as Context
+        EtaDatabase.closeForTests()
+        context.deleteDatabase("eta.db")
+        val database = EtaDatabase.get(context)
+        try {
+            val dao = database.conversationDao()
+            val category = ConversationCategoryEntity("category-a", "Category A", 0, 1)
+            dao.upsertCategory(category)
+            dao.upsertCategory(category.copy(id = "category-b", name = "Category B"))
+            val original = ConversationEntity(id = "persisted", title = "Original", thinkingEnabled = false,
+                createdAt = 11, updatedAt = 12, isPinned = true, categoryId = category.id,
+                parentConversationId = "parent", parentMessageId = "fork-message", branchRootId = "root")
+            dao.insertConversations(listOf(original))
+            fun assertIdentity(identity: ConversationIdentity, expectedCategory: String?) {
+                assertEquals(expectedCategory, identity.categoryId)
+                assertEquals("parent", identity.parentConversationId)
+                assertEquals("fork-message", identity.parentMessageId)
+                assertEquals("root", identity.branchRootId)
+                assertEquals(11L, identity.createdAt)
+                assertEquals(true, identity.isPinned)
+            }
+            assertIdentity(dao.conversationIdentities().single(), "category-a")
+            val initial = io.github.mangi.eta.ui.model.AgentChatHomeUiState(
+                messages = emptyList(), input = "", isStreaming = false, thinkingEnabled = false,
+                reasoningEffort = io.github.mangi.eta.data.model.ReasoningEffort.OFF,
+                isConversationLoaded = true)
+            val content = io.github.mangi.eta.ui.app.AgentConversationPersistence.Content(initial, "Rewritten", 13, true)
+            // A loaded rewrite reconstructs ConversationEntity from the actual DAO identity projection.
+            io.github.mangi.eta.ui.app.AgentConversationStore.saveChanges(
+                context, original.id, mapOf(original.id to content), emptyMap())
+            assertIdentity(dao.conversationIdentities().single(), "category-a")
+            assertEquals("Rewritten", dao.conversationEntityRow(original.id)!!.title)
+            // Explicit category moves must survive an upsert in the same transaction.
+            io.github.mangi.eta.ui.app.AgentConversationStore.saveChanges(
+                context, original.id, mapOf(original.id to content.copy(title = "Moved", updatedAt = 14)),
+                mapOf(original.id to content), categoryIds = mapOf(original.id to "category-b"))
+            assertIdentity(dao.conversationIdentities().single(), "category-b")
+            // Preserved IDs represent category changes committed separately from a stale UI snapshot.
+            io.github.mangi.eta.ui.app.AgentConversationStore.saveChanges(
+                context, original.id, mapOf(original.id to content.copy(title = "Preserved", updatedAt = 15)),
+                emptyMap(), categoryIds = emptyMap(), preservedCategoryIds = setOf(original.id))
+            assertIdentity(dao.conversationIdentities().single(), "category-b")
+            // Unloaded rows only update their small metadata surface, never drop fork fields/messages.
+            val retainedMessage = ConversationMessageEntity(id = "retained-message", conversationId = original.id,
+                sortIndex = 0, type = "assistant", content = "Retained partial history", cacheWriteTokens = 7,
+                compactionArchiveId = "archive-kept", requestCount = 2)
+            dao.insertMessages(listOf(retainedMessage))
+            val unloaded = content.copy(title = "Unloaded rename", updatedAt = 16, isConversationLoaded = false)
+            io.github.mangi.eta.ui.app.AgentConversationStore.saveChanges(
+                context, original.id, mapOf(original.id to unloaded), emptyMap(),
+                partiallyLoadedConversationIds = setOf(original.id), categoryIds = emptyMap())
+            assertIdentity(dao.conversationIdentities().single(), null)
+            assertEquals("Unloaded rename", dao.conversationEntityRow(original.id)!!.title)
+            assertEquals(listOf(retainedMessage), dao.messages())
+            assertEquals(emptyMap<String, String>(), io.github.mangi.eta.ui.app.AgentConversationStore.load(context).categoryIds)
+            // Backups use the real entity serializer; header staging must retain categories too.
+            val entity = dao.conversationEntityRow(original.id)!!.copy(categoryId = category.id)
+            val document = io.github.mangi.eta.data.repository.EtaBackupDocument(
+                exportedAt = 123, conversations = listOf(entity), conversationCategories = listOf(category))
+            val json = io.github.mangi.eta.data.repository.EtaBackupJsonStreams.json
+            val bytes = json.encodeToString(io.github.mangi.eta.data.repository.EtaBackupDocument.serializer(), document)
+                .toByteArray(Charsets.UTF_8)
+            io.github.mangi.eta.data.repository.EtaBackupJsonStreams.stage(context, bytes.inputStream()).use { staged ->
+                assertEquals(listOf(category), staged.header.conversationCategories)
+                val restored = mutableListOf<ConversationEntity>()
+                staged.conversations { restored += it }
+                assertEquals(listOf(entity), restored)
+                dao.insertConversations(restored)
+                assertIdentity(dao.conversationIdentities().single(), category.id)
+                assertEquals(listOf(retainedMessage), dao.messages())
+                assertEquals(mapOf(original.id to category.id),
+                    io.github.mangi.eta.ui.app.AgentConversationStore.load(context).categoryIds)
+            }
+        } finally {
+            EtaDatabase.closeForTests()
+            context.deleteDatabase("eta.db")
+        }
+    }
+
+    private fun historicalMigrations() = listOf(
+        EtaDatabase.MIGRATION_6_7, EtaDatabase.MIGRATION_7_8, EtaDatabase.MIGRATION_8_9,
+        EtaDatabase.MIGRATION_9_10, EtaDatabase.MIGRATION_10_11, EtaDatabase.MIGRATION_11_12,
+        EtaDatabase.MIGRATION_12_13, EtaDatabase.MIGRATION_13_14, EtaDatabase.MIGRATION_14_15,
+        EtaDatabase.MIGRATION_15_16, EtaDatabase.MIGRATION_16_17, EtaDatabase.MIGRATION_17_18,
+        EtaDatabase.MIGRATION_18_19, EtaDatabase.MIGRATION_19_20, EtaDatabase.MIGRATION_20_21,
+        EtaDatabase.MIGRATION_21_22, EtaDatabase.MIGRATION_22_23, EtaDatabase.MIGRATION_23_24,
+        EtaDatabase.MIGRATION_24_25, EtaDatabase.MIGRATION_25_26, EtaDatabase.MIGRATION_26_27,
+    )
+
+    private fun verifyLegacyUpgrade(sourceVersion: Int) {
+        val context = RuntimeEnvironment.getApplication() as Context
+        val databaseName = "legacy-${UUID.randomUUID()}.db"
+        createVersion6Database(context, databaseName)
+        val configuration = SupportSQLiteOpenHelper.Configuration.builder(context).name(databaseName)
+            .callback(object : SupportSQLiteOpenHelper.Callback(sourceVersion) {
+                override fun onCreate(db: SupportSQLiteDatabase) = error("Expected version 6 fixture")
+                override fun onUpgrade(db: SupportSQLiteDatabase, oldVersion: Int, newVersion: Int) {
+                    assertEquals(6, oldVersion)
+                    historicalMigrations().filter { it.endVersion <= sourceVersion }.forEach { it.migrate(db) }
+                    db.execSQL("UPDATE conversations SET model_id = 'bound-model' WHERE id = 'conv-1'")
+                    if (sourceVersion >= 24) db.execSQL("UPDATE conversations SET is_pinned = 1 WHERE id = 'conv-1'")
+                    if (sourceVersion >= 27) {
+                        db.execSQL("UPDATE conversation_messages SET cache_write_tokens = 31, compaction_archive_id = 'kept-archive', " +
+                            "step_count = 4, llm_ms = 1234, tool_ms = 99, ttft_ms = 28, ttft_steps = 2, " +
+                            "decode_ms = 1100, decode_tokens = 80 WHERE id = 'message-1'")
+                    }
+                }
+            }).build()
+        FrameworkSQLiteOpenHelperFactory().create(configuration).use { it.writableDatabase }
+        val database = Room.databaseBuilder(context, EtaDatabase::class.java, databaseName)
+            .addMigrations(*(historicalMigrations() + EtaDatabase.MIGRATION_27_28).toTypedArray())
+            .build()
+        try {
+            runBlocking(Dispatchers.IO) {
+                val dao = database.conversationDao()
+                val conversation = dao.conversationMetadataRows().first { it.id == "conv-1" }
+                assertEquals("保留的对话", conversation.title)
+                assertEquals("bound-model", conversation.modelId)
+                assertEquals(sourceVersion >= 24, conversation.isPinned)
+                assertEquals("", conversation.lastModelUsageJson)
+                assertEquals("conv-1", conversation.branchRootId)
+                assertEquals(null, conversation.categoryId)
+                val message = dao.messages().single()
+                assertEquals("旧消息", message.content)
+                assertEquals(0L, message.createdAt)
+                assertEquals(null, message.requestDurationMs)
+                if (sourceVersion >= 27) {
+                    assertEquals(31, message.cacheWriteTokens)
+                    assertEquals("kept-archive", message.compactionArchiveId)
+                    assertEquals(4, message.stepCount)
+                    assertEquals(1234L, message.llmMs)
+                    assertEquals(99L, message.toolMs)
+                    assertEquals(28L, message.ttftMs)
+                    assertEquals(2, message.ttftSteps)
+                    assertEquals(1100L, message.decodeMs)
+                    assertEquals(80, message.decodeTokens)
+                }
+                assertEquals(emptyList<AgentTaskEntity>(), database.agentTaskDao().tasks())
+                assertEquals(0, database.tokenUsageDao().recordCount())
+                assertEquals(emptyList<ConversationCategoryEntity>(), dao.categories())
+                dao.upsertCategory(ConversationCategoryEntity("category-1", "Retained category", 0, 1))
+                dao.setConversationCategory("conv-1", "category-1")
+                dao.setConversationBranch("conv-1", "parent-1", "fork-message", "tree-root")
+                val branched = dao.conversationMetadataRow("conv-1")!!
+                assertEquals("category-1", branched.categoryId)
+                assertEquals("parent-1", branched.parentConversationId)
+                assertEquals("fork-message", branched.parentMessageId)
+                assertEquals("tree-root", branched.branchRootId)
+                assertEquals(sourceVersion >= 24, branched.isPinned)
+                dao.setConversationPinned("conv-1", true)
+                dao.updateConversationTitle("conv-1", "Renamed without unpinning", 123)
+                assertEquals(true, dao.conversationMetadataRow("conv-1")!!.isPinned)
+                assertEquals(true, dao.conversationIdentities().first { it.id == "conv-1" }.isPinned)
+                assertEquals(true, dao.conversationIndex().first { it.id == "conv-1" }.isPinned)
+                val task = AgentTaskEntity(id = "task-1", name = "Task", prompt = "Summarize", triggerJson = "{}",
+                    enabled = false, nextRunAt = null, cooldownSeconds = 900, maxRuns = 10,
+                    runCount = 2, lastStatus = "completed", createdAt = 1, updatedAt = 2)
+                database.agentTaskDao().insertTask(task)
+                assertEquals(listOf(task), database.agentTaskDao().tasks())
+                assertEquals("fixture-existing-api-key", database.providerDao().providerById("provider-1")!!.toDomain().apiKey)
+            }
+            assertEquals(ETA_DB_SCHEMA_VERSION, database.openHelper.readableDatabase.version)
+        } finally {
+            database.close()
+            context.deleteDatabase(databaseName)
+        }
+    }
+
+    @Test
+    fun incompatibleForkVersion24FailsClosedWithoutDeletingUserData() {
+        val context = RuntimeEnvironment.getApplication() as Context
+        val databaseName = "foreign-fork-${UUID.randomUUID()}.db"
+        createVersion6Database(context, databaseName)
+        val configuration = SupportSQLiteOpenHelper.Configuration.builder(context).name(databaseName)
+            .callback(object : SupportSQLiteOpenHelper.Callback(24) {
+                override fun onCreate(db: SupportSQLiteDatabase) = error("Expected version 6 fixture")
+                override fun onUpgrade(db: SupportSQLiteDatabase, oldVersion: Int, newVersion: Int) {
+                    // The incoming fork's v24 did not have custom.5's v22..27 schema.
+                    historicalMigrations().filter { it.endVersion <= 21 }.forEach { it.migrate(db) }
+                    db.execSQL("ALTER TABLE conversations ADD COLUMN last_model_usage_json TEXT NOT NULL DEFAULT ''")
+                    db.execSQL("CREATE TABLE retained_fork_tasks (id TEXT PRIMARY KEY, payload TEXT)")
+                    db.execSQL("INSERT INTO retained_fork_tasks VALUES ('task-1', 'keep-fork-task')")
+                }
+            }).build()
+        FrameworkSQLiteOpenHelperFactory().create(configuration).use { it.writableDatabase }
+        val database = Room.databaseBuilder(context, EtaDatabase::class.java, databaseName)
+            .addMigrations(*(historicalMigrations() + EtaDatabase.MIGRATION_27_28).toTypedArray()).build()
+        try {
+            org.junit.Assert.assertThrows(RuntimeException::class.java) { database.openHelper.writableDatabase }
+        } finally { database.close() }
+        val reader = SupportSQLiteOpenHelper.Configuration.builder(context).name(databaseName)
+            .callback(object : SupportSQLiteOpenHelper.Callback(24) {
+                override fun onCreate(db: SupportSQLiteDatabase) = error("Must not recreate user database")
+                override fun onUpgrade(db: SupportSQLiteDatabase, oldVersion: Int, newVersion: Int) = error("Must not upgrade")
+            }).build()
+        try {
+            FrameworkSQLiteOpenHelperFactory().create(reader).use { helper ->
+                val db = helper.readableDatabase
+                assertEquals(24, db.version)
+                db.query("SELECT title FROM conversations WHERE id = 'conv-1'").use {
+                    org.junit.Assert.assertTrue(it.moveToFirst()); assertEquals("保留的对话", it.getString(0))
+                }
+                db.query("SELECT payload FROM retained_fork_tasks WHERE id = 'task-1'").use {
+                    org.junit.Assert.assertTrue(it.moveToFirst()); assertEquals("keep-fork-task", it.getString(0))
+                }
+            }
+        } finally { context.deleteDatabase(databaseName) }
+    }
+
+    @Test
+    fun migration27To28AddsUsageDetailColumnsWithoutDroppingOldMetrics() {
+        val context = RuntimeEnvironment.getApplication() as Context
+        val databaseName = "migration-27-28-${UUID.randomUUID()}.db"
+        val configuration = SupportSQLiteOpenHelper.Configuration.builder(context).name(databaseName)
+            .callback(object : SupportSQLiteOpenHelper.Callback(27) {
+                override fun onCreate(db: SupportSQLiteDatabase) {
+                    db.execSQL("CREATE TABLE conversations (id TEXT NOT NULL PRIMARY KEY, is_pinned INTEGER NOT NULL DEFAULT 0)")
+                    db.execSQL("INSERT INTO conversations (id, is_pinned) VALUES ('kept', 1)")
+                    db.execSQL("CREATE TABLE conversation_messages (id TEXT NOT NULL PRIMARY KEY, content TEXT NOT NULL, " +
+                        "cache_write_tokens INTEGER, compaction_archive_id TEXT, step_count INTEGER, llm_ms INTEGER)")
+                    db.execSQL("INSERT INTO conversation_messages VALUES ('message', 'old body', 20, 'archive', 4, 800)")
+                }
+                override fun onUpgrade(db: SupportSQLiteDatabase, oldVersion: Int, newVersion: Int) = Unit
+            }).build()
+        try {
+            FrameworkSQLiteOpenHelperFactory().create(configuration).use { helper ->
+                val database = helper.writableDatabase
+                EtaDatabase.MIGRATION_27_28.migrate(database)
+                val columns = database.query("PRAGMA table_info(conversation_messages)").use { cursor ->
+                    val nameIndex = cursor.getColumnIndexOrThrow("name")
+                    buildSet { while (cursor.moveToNext()) add(cursor.getString(nameIndex)) }
+                }
+                val expected = setOf("system_prompt_tokens", "tool_definition_tokens", "conversation_tokens",
+                    "first_token_ms", "tool_duration_ms", "request_count", "request_duration_ms", "created_at")
+                assertEquals(expected, columns.intersect(expected))
+                database.query("SELECT content, cache_write_tokens, compaction_archive_id, step_count, llm_ms, created_at FROM conversation_messages").use {
+                    org.junit.Assert.assertTrue(it.moveToFirst())
+                    assertEquals("old body", it.getString(0)); assertEquals(20, it.getInt(1))
+                    assertEquals("archive", it.getString(2)); assertEquals(4, it.getInt(3))
+                    assertEquals(800L, it.getLong(4)); assertEquals(0L, it.getLong(5))
+                }
+                database.query("SELECT is_pinned, branch_root_id FROM conversations WHERE id = 'kept'").use {
+                    org.junit.Assert.assertTrue(it.moveToFirst())
+                    assertEquals(1, it.getInt(0)); assertEquals("kept", it.getString(1))
+                }
+            }
+        } finally { context.deleteDatabase(databaseName) }
     }
 
     private fun createVersion6Database(

@@ -16,7 +16,7 @@ class AgentRuntimeRequestConfigResolverTest {
     @Test
     fun onlyEtaProcessesWithSupportedEntryCanDeclareSearchPresentation() {
         val sources = listOf(AgentRuntimeWire.AGENT_UI_HANDOFF_SOURCE,
-            AgentRuntimeWire.ETA_VOICE_HANDOFF_SOURCE, "external", "unknown")
+            AgentRuntimeWire.ETA_VOICE_HANDOFF_SOURCE, "external", "breeno", "xiaoai", "unknown")
         for (source in sources) for (isEta in listOf(false, true)) {
             val original = request(source, modelConfig("fixture", ReasoningEffort.DEFAULT)
                 .copy(supportsSearchSuggestions = true))
@@ -39,46 +39,50 @@ class AgentRuntimeRequestConfigResolverTest {
 
     @Test
     fun oauthRequestUsesLocalConnectionAndPreservesSupportedTransientChoices() {
-        val local = modelConfig("", ReasoningEffort.DEFAULT).copy(
-            providerId = "account-provider",
-            authMode = ProviderAuthModes.OPENAI_CHATGPT,
-            baseUrl = "https://api.openai.com/v1",
-            customHeaders = listOf(CustomHeader("x-local", "fixture")),
-            reasoningCapabilities = ModelReasoningCapabilities(
-                supportedEfforts = listOf(ReasoningEffort.LOW, ReasoningEffort.HIGH), canDisable = true,
-            ),
-        )
-        val entry = local.copy(
-            apiKey = "fixture-untrusted", baseUrl = "https://untrusted.invalid",
-            customHeaders = listOf(CustomHeader("x-untrusted", "fixture")),
-            reasoningEffort = ReasoningEffort.HIGH,
-            terminalTools = true, deviceSensitiveReadTools = true,
-            autoCompactionEnabled = false,
-        )
-        val request = request("external", entry)
-        assertTrue(AgentRuntimeRequestConfigResolver.requiresRuntimeConfig(request))
-        val result = AgentRuntimeRequestConfigResolver.applyRuntimeConfig(request, local).config
+        for (source in listOf("external", "breeno", "xiaoai")) {
+            val local = modelConfig("", ReasoningEffort.DEFAULT).copy(
+                providerId = "account-provider",
+                authMode = ProviderAuthModes.OPENAI_CHATGPT,
+                baseUrl = "https://api.openai.com/v1",
+                customHeaders = listOf(CustomHeader("x-local", "fixture")),
+                reasoningCapabilities = ModelReasoningCapabilities(
+                    supportedEfforts = listOf(ReasoningEffort.LOW, ReasoningEffort.HIGH), canDisable = true,
+                ),
+            )
+            val entry = local.copy(
+                apiKey = "fixture-untrusted", baseUrl = "https://untrusted.invalid",
+                customHeaders = listOf(CustomHeader("x-untrusted", "fixture")),
+                reasoningEffort = ReasoningEffort.HIGH,
+                terminalTools = true, deviceSensitiveReadTools = true,
+                autoCompactionEnabled = false,
+            )
+            val request = request(source, entry)
+            assertTrue(AgentRuntimeRequestConfigResolver.requiresRuntimeConfig(request))
+            val result = AgentRuntimeRequestConfigResolver.applyRuntimeConfig(request, local).config
 
-        assertEquals(local.baseUrl, result.baseUrl)
-        assertEquals("", result.apiKey)
-        assertEquals(local.customHeaders, result.customHeaders)
-        assertEquals(ReasoningEffort.HIGH, result.reasoningEffort)
-        assertTrue(result.terminalTools)
-        assertTrue(result.deviceSensitiveReadTools)
-        assertFalse(result.autoCompactionEnabled)
+            assertEquals(local.baseUrl, result.baseUrl)
+            assertEquals("", result.apiKey)
+            assertEquals(local.customHeaders, result.customHeaders)
+            assertEquals(ReasoningEffort.HIGH, result.reasoningEffort)
+            assertTrue(result.terminalTools)
+            assertTrue(result.deviceSensitiveReadTools)
+            assertFalse(result.autoCompactionEnabled)
+        }
     }
 
     @Test
     fun oauthRequestCannotChangeLocalAccountOrInjectUnsupportedReasoning() {
-        val local = modelConfig("", ReasoningEffort.DEFAULT).copy(
-            providerId = "account-provider", authMode = ProviderAuthModes.XAI_GROK,
-            reasoningCapabilities = ModelReasoningCapabilities(supportedEfforts = listOf(ReasoningEffort.LOW)),
-        )
-        val request = request("external", local.copy(reasoningEffort = ReasoningEffort.MAX))
-        assertEquals(ReasoningEffort.LOW,
-            AgentRuntimeRequestConfigResolver.applyRuntimeConfig(request, local).config.reasoningEffort)
-        assertThrows(IllegalArgumentException::class.java) {
-            AgentRuntimeRequestConfigResolver.applyRuntimeConfig(request, local.copy(providerId = "other-provider"))
+        for (source in listOf("external", "breeno", "xiaoai")) {
+            val local = modelConfig("", ReasoningEffort.DEFAULT).copy(
+                providerId = "account-provider", authMode = ProviderAuthModes.XAI_GROK,
+                reasoningCapabilities = ModelReasoningCapabilities(supportedEfforts = listOf(ReasoningEffort.LOW)),
+            )
+            val request = request(source, local.copy(reasoningEffort = ReasoningEffort.MAX))
+            assertEquals(ReasoningEffort.LOW,
+                AgentRuntimeRequestConfigResolver.applyRuntimeConfig(request, local).config.reasoningEffort)
+            assertThrows(IllegalArgumentException::class.java) {
+                AgentRuntimeRequestConfigResolver.applyRuntimeConfig(request, local.copy(providerId = "other-provider"))
+            }
         }
     }
 

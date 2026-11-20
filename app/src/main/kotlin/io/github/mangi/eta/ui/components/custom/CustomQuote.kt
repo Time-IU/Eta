@@ -4,3 +4,6 @@ package io.github.mangi.eta.ui.components.custom
 internal fun quoteWithDraft(text: String, draft: String): String =
     text.replace("\r\n", "\n").replace('\r', '\n')
         .split('\n').joinToString("\n") { "> $it" } + "\n\n" + draft
+
+/** Null selectedText means whole message; the owner resolves role and original snapshot. */
+internal val LocalCustomReference = androidx.compose.runtime.compositionLocalOf<((String, String?) -> Unit)?> { null }

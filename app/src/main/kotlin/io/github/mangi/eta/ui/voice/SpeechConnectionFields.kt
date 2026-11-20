@@ -40,6 +40,9 @@ import top.yukonga.miuix.kmp.theme.MiuixTheme
 internal fun SpeechConnectionSection(store: SpeechSettingsStore, synthesis: Boolean) {
     if (!synthesis) {
         when (store.settings.asr) {
+            AsrProvider.SYSTEM -> {
+                SpeechNote("使用所选系统语音识别服务；联网行为由系统服务决定。本机离线模型不会自动切换到此服务。")
+            }
             AsrProvider.LOCAL, AsrProvider.QWEN3_LOCAL, AsrProvider.SHERPA_NCNN -> LocalSpeechConnectionSection(store)
             AsrProvider.MIMO -> MimoAsrConnectionSection(store)
             AsrProvider.DEEPSEEK -> DeepSeekAsrConnectionSection(store)

@@ -52,6 +52,7 @@ import io.github.mangi.eta.agent.browser.BrowserSessionSnapshot
 import io.github.mangi.eta.agent.overlay.toolDisplayName
 import io.github.mangi.eta.agent.subagent.AgentSubagentToolCatalog
 import io.github.mangi.eta.agent.subagent.SubagentActivitySnapshot
+import io.github.mangi.eta.agent.subagent.SubagentRunRegistry
 import io.github.mangi.eta.ui.model.ToolActivityMessageUi
 import io.github.mangi.eta.ui.model.ToolActivityStatusUi
 import kotlinx.coroutines.Dispatchers
@@ -120,9 +121,39 @@ internal fun ToolActivityRow(
                 output = message.resultSummary.orEmpty(),
             )
         }
+        // 切走会话时进度事件可能被丢掉：消息里的快照会停在很早的状态，甚至解析失败退化成
+        // 只有「完成 · N 次工具调用」的占位。所以这里按 toolCallId 从进程内注册表兜底，
+        // 且不受消息状态限制——已结束的子代理同样需要把步骤补回来。
+        val toolCallId = remember(message.id) {
+            Regex("^.*-tool-\\d+-(.+)$").find(message.id)?.groupValues?.getOrNull(1).orEmpty()
+        }
+        var liveJson by remember(message.id) { mutableStateOf<String?>(null) }
+        LaunchedEffect(message.id, toolCallId, snapshot.subagentId, snapshot.status) {
+            if (toolCallId.isBlank() && snapshot.subagentId.isBlank()) {
+                liveJson = null
+                return@LaunchedEffect
+            }
+            while (true) {
+                val live = if (toolCallId.isNotBlank()) {
+                    SubagentRunRegistry.snapshotForToolCall(toolCallId)
+                } else {
+                    SubagentRunRegistry.latestSnapshot(snapshot.subagentId)
+                }
+                if (live != null) liveJson = live
+                val liveStatus = SubagentActivitySnapshot.decode(liveJson)?.status
+                val messageDone = snapshot.status != SubagentActivitySnapshot.STATUS_RUNNING
+                if (messageDone && (live == null || (liveStatus != null &&
+                    liveStatus != SubagentActivitySnapshot.STATUS_RUNNING))
+                ) {
+                    return@LaunchedEffect
+                }
+                delay(1000)
+            }
+        }
+        val effective = SubagentActivitySnapshot.decode(liveJson) ?: snapshot
         SubagentActivityRow(
             message = message,
-            snapshot = snapshot,
+            snapshot = effective,
             elapsedSeconds = elapsedSeconds,
             modifier = modifier,
         )
@@ -222,7 +253,7 @@ internal fun ToolActivityRow(
                     contentDescription = stringResource(
                         if (expanded) R.string.tool_details_collapse else R.string.tool_details_expand,
                     ),
-                    modifier = Modifier.padding(start = 6.dp, end = 4.dp),
+                    modifier = Modifier.padding(start = 6.dp, end = 8.dp),
                 )
             }
         }
@@ -313,7 +344,7 @@ internal fun ToolGroupRow(
                 contentDescription = stringResource(
                     if (expanded) R.string.tool_details_collapse else R.string.tool_details_expand,
                 ),
-                modifier = Modifier.padding(start = 6.dp, end = 4.dp),
+                modifier = Modifier.padding(start = 6.dp, end = 8.dp),
             )
         }
         AnimatedVisibility(

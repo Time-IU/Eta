@@ -8,6 +8,8 @@ import org.intellij.markdown.flavours.gfm.GFMFlavourDescriptor
 import org.intellij.markdown.flavours.gfm.GFMTokenTypes
 import org.intellij.markdown.parser.MarkdownParser
 
+/** Markdown-aware speech text: retain prose/list semantics while excluding URLs,
+ * fenced code, tables and technical paths/hash tokens. Numeric and multilingual prose stays intact. */
 internal object SpeechText {
     fun readable(markdown: String): String {
         val root = MarkdownParser(GFMFlavourDescriptor())
@@ -66,7 +68,7 @@ internal object SpeechText {
             }
         }
         // 普通文本和行内代码也可能含有未被识别为链接的网址。
-        return withoutUrls(buildString { appendNode(root) })
+        return dropTechnicalTokens(withoutUrls(buildString { appendNode(root) }))
             .lineSequence().map { it.replace(HORIZONTAL_SPACE, " ").trim() }.joinToString("\n")
             .replace(BLANK_LINES, "\n\n").trim()
     }
@@ -83,7 +85,18 @@ internal object SpeechText {
     private val HORIZONTAL_SPACE = Regex("[ \\t]+")
     private val BLANK_LINES = Regex("\\n{3,}")
 
-    fun chunks(text: String, limit: Int = 500): List<String> {
+    private fun dropTechnicalTokens(source: String): String =
+        TECHNICAL_TOKEN_PATTERNS.fold(source) { text, pattern -> pattern.replace(text, " ") }
+
+    private val TECHNICAL_TOKEN_PATTERNS = listOf(
+        Regex("""(?:[A-Za-z]:)?(?:[\\/]|\.{1,2}[\\/])[A-Za-z0-9_.\-\\/]+"""),
+        Regex("""[A-Za-z0-9_.\-]+(?:[\\/][A-Za-z0-9_.\-]+)+"""),
+        Regex("""\b(?=[0-9a-fA-F]{32,}\b)(?=[0-9a-fA-F]*[a-fA-F])[0-9a-fA-F]+\b"""),
+    )
+
+    const val DEFAULT_LIMIT = 500
+
+    fun chunks(text: String, limit: Int = DEFAULT_LIMIT): List<String> {
         require(limit >= 2)
         val result = mutableListOf<String>()
         var remaining = text.trim()

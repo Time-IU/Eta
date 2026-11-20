@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="unified_canvas_title">Background canvas</string>
+    <string name="unified_canvas_enable">Enable background canvas</string>
+    <string name="unified_canvas_enable_summary">One shared display engine for all background app operations. Existing selections and settings are retained.</string>
+    <string name="unified_canvas_background">Automatic background execution</string>
+    <string name="unified_canvas_background_summary">Open cross-application tasks on the background canvas. When off, explicit background opening is still available.</string>
+</resources>

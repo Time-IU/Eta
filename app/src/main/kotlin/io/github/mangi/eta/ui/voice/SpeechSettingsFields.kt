@@ -56,6 +56,7 @@ import top.yukonga.miuix.kmp.theme.MiuixTheme
 @Composable
 internal fun AsrProvider.label(): String = stringResource(
     when (this) {
+        AsrProvider.SYSTEM -> R.string.speech_asr_system
         AsrProvider.QWEN_REALTIME -> R.string.speech_asr_qwen_realtime
         AsrProvider.QWEN_FLASH -> R.string.speech_asr_qwen_flash
         AsrProvider.QWEN_FILE -> R.string.speech_asr_qwen_file
@@ -124,6 +125,9 @@ internal fun SpeechNote(text: String, modifier: Modifier = Modifier) {
     }
 }
 
+
+
+/** 配置读取期间显示加载指示，读取失败时换成带图标的错误说明，两种状态不再长得一样。 */
 @Composable
 internal fun SpeechLoadingState(failure: String?) {
     if (failure != null) {
@@ -138,6 +142,7 @@ internal fun SpeechLoadingState(failure: String?) {
     }
 }
 
+/** 卡片内的表单字段块，与 Provider 配置页使用同一套内边距与字段间距。 */
 @Composable
 internal fun SpeechFieldColumn(content: @Composable ColumnScope.() -> Unit) {
     Column(

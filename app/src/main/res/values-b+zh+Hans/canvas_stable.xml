@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="canvas_settings_loading">正在读取已保存的画布设置…</string>
+    <string name="canvas_settings_saving">正在保存本地设置并检查同步状态…</string>
+    <string name="canvas_settings_read_failed">无法读取已保存的设置。若显示上次成功读取的值，这些值仅供查看且可能已过期。请重新读取成功后再修改；此前的 Hook 确认不代表本次读取成功。</string>
+    <string name="canvas_settings_read_retry">重试设置读取／Hook 同步</string>
+</resources>

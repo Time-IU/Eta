@@ -128,6 +128,7 @@ internal fun SpeechSynthesisScreen(onBack: () -> Unit) {
     }
 }
 
+/** 试听使用当前草稿；播放中再次点击停止，错误直接显示在行摘要里。 */
 @Composable
 private fun SpeechPreviewSection(store: SpeechSettingsStore) {
     val playback by store.playback.state.collectAsState()

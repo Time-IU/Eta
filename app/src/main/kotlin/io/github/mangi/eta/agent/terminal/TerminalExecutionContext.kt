@@ -32,9 +32,11 @@ internal data class TerminalExecutionContext(
     val linuxReady: Boolean
         get() = LinuxEnvironmentPaths.rootfsReady(linuxRootfsPath)
 
+    /** 常用工具（curl/git/jq/rg/fd/sqlite3/wget/ps 等）是否已安装，供提示词说明。 */
     val linuxCommonToolsReady: Boolean
         get() = AlpineEnvironmentPaths.commonToolsReady(linuxRootfsPath)
 
+    /** 已安装的可选组件（python/node/ssh/kimi/apk_analysis 等）。 */
     val linuxInstalledProfiles: List<String>
         get() {
             if (!linuxReady || linuxRootfsPath.isNullOrBlank()) return emptyList()

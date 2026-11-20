@@ -55,6 +55,7 @@ internal class AgentRunMessageProjector(
         }
         is AgentEvent.SearchSuggestions -> attachSearchSuggestions(runId, event, messages)
         is AgentEvent.UsageReceived -> attachUsage(runId, event.round, event.usage.toUi(), messages)
+        is AgentEvent.HistoryTrimmed -> messages
         is AgentEvent.ToolStarted ->
             startTool(runId, event, finalizeTextRound(runId, event.round, finalizeThinkingRound(runId, event.round, messages)))
         is AgentEvent.ToolFinished -> finishTool(runId, event, messages)
@@ -253,6 +254,8 @@ internal class AgentRunMessageProjector(
             content = delta,
             isStreaming = true,
             renderMarkdown = false,
+            // 一条回复的时间按首个增量落下的时刻记，流式续写不再刷新。
+            createdAt = System.currentTimeMillis(),
         )
     }
 
@@ -844,4 +847,11 @@ internal fun AgentTokenUsage.toUi(): TokenUsageUi =
         ttftSteps = ttftSteps,
         decodeMs = decodeMs,
         decodeTokens = decodeTokens,
+        requestDurationMs = requestDurationMs,
+        systemPromptTokens = systemPromptTokens,
+        toolDefinitionTokens = toolDefinitionTokens,
+        conversationTokens = conversationTokens,
+        firstTokenMs = firstTokenMs,
+        toolDurationMs = toolDurationMs,
+        requestCount = requestCount,
     )

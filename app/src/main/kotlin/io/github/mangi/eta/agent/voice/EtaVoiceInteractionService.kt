@@ -91,11 +91,7 @@ class EtaVoiceAssistActivity : Activity() {
             AssistantEntryFallback.PERMISSION_GUIDANCE -> {
                 AndroidAgentLogger.warn("Eta assistant visible_failure overlay_permission_missing")
                 Toast.makeText(this, "助理会话不可用，请允许 Eta 显示悬浮窗后重试。", Toast.LENGTH_LONG).show()
-                runCatching {
-                    startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")))
-                }.onFailure {
-                    Toast.makeText(this, "请在系统设置中允许 Eta 显示悬浮窗。", Toast.LENGTH_LONG).show()
-                }
+                io.github.mangi.eta.ui.navigation.OverlayPermissionNavigation.open(this)
             }
         }
         finish()

@@ -11,6 +11,14 @@ internal enum class AgentOverlayPhase { RUNNING, PAUSED, FINISHED, FAILED }
  * Agent 浮窗的渲染状态。由 [AgentEvent] 流累积而来，[AgentOverlayBubble] 直接消费。
  */
 @Immutable
+/** 悬浮胶囊展开后用于跳转的一条会话：running 表示还在跑，false 表示已完成但仍可点回去。 */
+internal data class AgentOverlayRunningSession(
+    val runId: String,
+    val conversationId: String,
+    val title: String,
+    val running: Boolean = true,
+)
+
 internal data class AgentOverlayState(
     val phase: AgentOverlayPhase = AgentOverlayPhase.RUNNING,
     val round: Int = 0,
@@ -21,6 +29,9 @@ internal data class AgentOverlayState(
      * 只保留尾部一小段，供用户扫一眼知道 Agent 在想什么；完整推理仍在会话里。
      */
     val thought: String = "",
+    /** 运行中的会话清单：执行通知与流体云用它描述并发。 */
+    val runningSessions: List<AgentOverlayRunningSession> = emptyList(),
+
 ) {
     companion object {
         val Initial = AgentOverlayState(status = AgentOverlayStatus.Reasoning)
@@ -55,6 +66,7 @@ private fun AgentOverlayState.projectEvent(event: AgentEvent): AgentOverlayState
     is AgentEvent.ProviderRequestStarted -> copy(round = event.round).thinkingUnlessWorking()
     is AgentEvent.ModelRetryScheduled -> copy(round = event.round, detailText = event.displayMessage).thinkingUnlessWorking()
     is AgentEvent.ContextCompaction -> copy(detailText = event.displayMessage).thinkingUnlessWorking()
+    is AgentEvent.HistoryTrimmed -> this
 
     is AgentEvent.AssistantBlockDelta -> when (event.kind) {
         AgentEvent.AssistantBlockKind.TEXT -> appendStreamingText(event)

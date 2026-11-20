@@ -16,6 +16,9 @@ import kotlinx.coroutines.runBlocking
  * 三者用途独立；配置和密钥不落盘，敏感工具原始数据由会话 codec 过滤。
  */
 internal object AgentRunCheckpointStore {
+    /** 每个 run 的父行副本：并发路径把父行清掉时用它补写，避免在途事件外键失败。 */
+    private val seededRuns =
+        java.util.concurrent.ConcurrentHashMap<String, RuntimeInFlightRunEntity>()
     data class Checkpoint(
         val runId: String,
         val ownerInstanceId: String,
@@ -29,6 +32,7 @@ internal object AgentRunCheckpointStore {
         val rewriteTargetMessageId: String? = null,
     )
 
+    @Synchronized
     fun start(
         context: Context,
         request: AgentRuntimeWire.RunRequest,
@@ -38,25 +42,30 @@ internal object AgentRunCheckpointStore {
         val handoff = request.handoff ?: return false
         if (handoff.source != AgentRuntimeWire.AGENT_UI_HANDOFF_SOURCE) return false
         val runId = request.runId.takeIf(String::isNotBlank) ?: return false
+        val entity = RuntimeInFlightRunEntity(
+            runId = runId,
+            ownerInstanceId = ownerInstanceId,
+            operation = request.operation,
+            rewriteTargetMessageId = request.rewriteTargetMessageId,
+            handoffId = handoff.id,
+            handoffSource = handoff.source,
+            handoffPayload = handoff.payload,
+            dismissEntrySurface = handoff.dismissEntrySurfaceOnForegroundOperation,
+            createdAt = now,
+            updatedAt = now,
+        )
+        io.github.mangi.eta.core.EtaTrace.log(
+            "ckpt.start",
+            "runId=$runId operation=${request.operation}",
+        )
         runBlocking(Dispatchers.IO) {
-            EtaDatabase.get(context.applicationContext).runtimeRunDao().replaceInFlightRun(
-                RuntimeInFlightRunEntity(
-                    runId = runId,
-                    ownerInstanceId = ownerInstanceId,
-                    operation = request.operation,
-                    rewriteTargetMessageId = request.rewriteTargetMessageId,
-                    handoffId = handoff.id,
-                    handoffSource = handoff.source,
-                    handoffPayload = handoff.payload,
-                    dismissEntrySurface = handoff.dismissEntrySurfaceOnForegroundOperation,
-                    createdAt = now,
-                    updatedAt = now,
-                )
-            )
+            EtaDatabase.get(context.applicationContext).runtimeRunDao().replaceInFlightRun(entity)
         }
+        seededRuns[runId] = entity
         return true
     }
 
+    @Synchronized
     fun append(
         context: Context,
         runId: String,
@@ -65,15 +74,26 @@ internal object AgentRunCheckpointStore {
         now: Long = System.currentTimeMillis(),
     ) {
         val durableEvent = event.recoveryProjection() ?: return
-        runBlocking(Dispatchers.IO) {
-            EtaDatabase.get(context.applicationContext).runtimeRunDao().appendInFlightEvent(
-                event = RuntimeInFlightEventEntity(
-                    runId = runId,
-                    sortIndex = sortIndex,
-                    eventJson = AgentEventJsonCodec.encode(durableEvent),
-                ),
-                updatedAt = now,
+        val dao = EtaDatabase.get(context.applicationContext).runtimeRunDao()
+        val row = RuntimeInFlightEventEntity(
+            runId = runId,
+            sortIndex = sortIndex,
+            eventJson = AgentEventJsonCodec.encode(durableEvent),
+        )
+        try {
+            runBlocking(Dispatchers.IO) { dao.appendInFlightEvent(row, now) }
+        } catch (constraint: android.database.sqlite.SQLiteConstraintException) {
+            // 并发会话下父行可能被其它路径清掉；外键失败会让失败现场整条丢失，
+            // 这里先把父行补回来（不动已写入的事件），再写一次。
+            io.github.mangi.eta.core.EtaTrace.log(
+                "ckpt.recover",
+                "runId=$runId sortIndex=$sortIndex checkpoint parent recovery",
             )
+            val seed = seededRuns[runId] ?: throw constraint
+            runBlocking(Dispatchers.IO) {
+                dao.upsertInFlightRun(seed)
+                dao.appendInFlightEvent(row, now)
+            }
         }
     }
 
@@ -109,21 +129,35 @@ internal object AgentRunCheckpointStore {
                 .toList()
         }
 
+    @Synchronized
     fun saveTranscript(context: Context, runId: String, transcript: List<AgentModelClient.ConversationMessage>) {
+        val safe = AgentConversationCodec.encodeTranscriptForStorage(transcript)
         runBlocking(Dispatchers.IO) {
-            EtaDatabase.get(context.applicationContext).runtimeRunDao()
-                .updateTranscript(runId, AgentConversationCodec.encodeTranscriptForStorage(transcript))
+            EtaDatabase.get(context.applicationContext).runtimeRunDao().updateTranscript(runId, safe)
         }
+        seededRuns.computeIfPresent(runId) { _, row -> row.copy(transcriptJson = safe) }
     }
 
+    @Synchronized
     fun saveContext(context: Context, runId: String, snapshot: AgentContextSnapshot) {
+        val encoded = snapshot.encode()
         runBlocking(Dispatchers.IO) {
-            EtaDatabase.get(context.applicationContext).runtimeRunDao().updateContextSnapshot(runId, snapshot.encode())
+            EtaDatabase.get(context.applicationContext).runtimeRunDao().updateContextSnapshot(runId, encoded)
         }
+        seededRuns.computeIfPresent(runId) { _, row -> row.copy(contextSnapshotJson = encoded) }
     }
 
+    @Synchronized
+    fun forgetSeed(runId: String) { seededRuns.remove(runId) }
+
+    @Synchronized
     fun remove(context: Context, runId: String) {
         if (runId.isBlank()) return
+        seededRuns.remove(runId)
+        io.github.mangi.eta.core.EtaTrace.log(
+            "ckpt.remove",
+            "runId=$runId 调用方=${io.github.mangi.eta.core.EtaTrace.callerHint()}",
+        )
         runBlocking(Dispatchers.IO) {
             EtaDatabase.get(context.applicationContext)
                 .runtimeRunDao()

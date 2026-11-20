@@ -1,5 +1,7 @@
 package io.github.mangi.eta.ui.screens.mcp
 
+import androidx.compose.ui.platform.LocalWindowInfo
+import androidx.compose.ui.platform.LocalDensity
 import android.widget.Toast
 import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.background
@@ -462,6 +464,8 @@ internal fun McpServerDetailScreen(
     var showDelete by remember { mutableStateOf(false) }
     var showToken by remember { mutableStateOf(false) }
     var token by remember { mutableStateOf("") }
+    var pendingToolChanges by remember(serverId) { mutableStateOf<Set<String>?>(null) }
+    var confirmingTools by remember(serverId) { mutableStateOf(false) }
 
     var optimisticServerEnabled by remember(server?.id, server?.enabled) {
         mutableStateOf(server?.enabled ?: true)
@@ -492,7 +496,7 @@ internal fun McpServerDetailScreen(
         }
     }
 
-    val onToggleTool: (McpToolDefinition, Boolean) -> Unit = { tool, enabled ->
+    val applyToggleTool: (McpToolDefinition, Boolean) -> Unit = { tool, enabled ->
         val previous = optimisticEnabledTools
         optimisticEnabledTools = previous.toMutableSet().apply {
             if (enabled) add(tool.name) else remove(tool.name)
@@ -513,7 +517,7 @@ internal fun McpServerDetailScreen(
         }
     }
 
-    val onToggleAllTools: (Boolean) -> Unit = { enabled ->
+    val applyToggleAllTools: (Boolean) -> Unit = { enabled ->
         val current = server
         if (current != null) {
             val previous = optimisticEnabledTools
@@ -536,6 +540,40 @@ internal fun McpServerDetailScreen(
                     ).show()
                 }
             }
+        }
+    }
+
+    val onEnableTools: (Set<String>) -> Unit = { names ->
+        if (!confirmingTools) {
+            val tools = server?.tools.orEmpty().filter { it.name in names && it.name !in optimisticEnabledTools }
+            if (tools.any { it.readOnlyHint != true }) {
+                pendingToolChanges = tools.map { it.name }.toSet()
+            } else if (tools.isNotEmpty()) {
+                val previous = optimisticEnabledTools
+                optimisticEnabledTools = previous + tools.map { it.name }
+                scope.launch {
+                    try {
+                        withContext(Dispatchers.IO) { McpServerRepository.setToolsEnabled(serverId, tools.map { it.name }, true) }
+                    } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                        throw cancelled
+                    } catch (failure: Exception) {
+                        optimisticEnabledTools = previous
+                        Toast.makeText(context, failure.message ?: resources.getString(R.string.settings_write_failed), Toast.LENGTH_SHORT).show()
+                    }
+                }
+            }
+        }
+    }
+    val onToggleTool: (McpToolDefinition, Boolean) -> Unit = { tool, enabled ->
+        if (!confirmingTools) {
+            if (enabled && tool.readOnlyHint != true) pendingToolChanges = setOf(tool.name)
+            else applyToggleTool(tool, enabled)
+        }
+    }
+    val onToggleAllTools: (Boolean) -> Unit = { enabled ->
+        if (!confirmingTools) {
+            if (enabled) onEnableTools(server?.tools.orEmpty().map { it.name }.toSet())
+            else applyToggleAllTools(false)
         }
     }
 
@@ -610,6 +648,9 @@ internal fun McpServerDetailScreen(
 
                 val enabledCount = server.tools.count { it.name in optimisticEnabledTools }
                 val allEnabled = server.tools.isNotEmpty() && enabledCount == server.tools.size
+                item(key = "tool-presets") {
+                    McpToolPresets(server, !working && !confirmingTools, onEnableTools) { onToggleAllTools(false) }
+                }
                 item(key = "tools-header") {
                     CouiSectionTitle(
                         text = "${stringResource(R.string.mcp_tools_count, server.tools.size)} · 已启用 $enabledCount",
@@ -774,6 +815,9 @@ internal fun McpServerDetailScreen(
 
                 val enabledCount = server.tools.count { it.name in optimisticEnabledTools }
                 val allEnabled = server.tools.isNotEmpty() && enabledCount == server.tools.size
+                item(key = "tool-presets") {
+                    McpToolPresets(server, !working && !confirmingTools, onEnableTools) { onToggleAllTools(false) }
+                }
                 item(key = "tools-header") {
                     Row(
                         modifier = Modifier
@@ -918,6 +962,53 @@ internal fun McpServerDetailScreen(
             }
         }
     }
+
+    pendingToolChanges?.let { requested ->
+        val currentTools = server?.tools.orEmpty().filter { it.name in requested }
+        val risky = currentTools.filter { it.readOnlyHint != true }
+        val dismiss: () -> Unit = { if (!confirmingTools) pendingToolChanges = null }
+        val confirm: () -> Unit = {
+            if (!confirmingTools) {
+                confirmingTools = true
+                scope.launch {
+                    val previous = optimisticEnabledTools
+                    try {
+                        val names = currentTools.map { it.name }.toSet()
+                        withContext(Dispatchers.IO) { McpServerRepository.setToolsEnabled(serverId, names, true) }
+                        optimisticEnabledTools = previous + names
+                        pendingToolChanges = null
+                    } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                        throw cancelled
+                    } catch (failure: Exception) {
+                        Toast.makeText(context, failure.message ?: resources.getString(R.string.settings_write_failed), Toast.LENGTH_SHORT).show()
+                    } finally { confirmingTools = false }
+                }
+            }
+        }
+        val title = "开启可能修改数据的工具"
+        val summary = "即将开启 ${currentTools.size} 项工具，其中 ${risky.size} 项可能写入或修改外部数据。请核对后确认。"
+        val content: @Composable () -> Unit = {
+            currentTools.forEach { tool ->
+                Text(text = tool.name, modifier = Modifier.padding(vertical = 4.dp))
+            }
+        }
+        if (LocalUiStyle.current == AppearanceUiStyle.COUI) {
+            CouiConfirmDialog(visible = true, title = title, message = summary,
+                confirmText = "确认开启", confirmEnabled = !confirmingTools && currentTools.isNotEmpty(),
+                cancelEnabled = !confirmingTools, destructive = true,
+                onConfirm = confirm, onDismissRequest = dismiss) { content() }
+        } else {
+            WindowDialog(show = true, title = title, summary = summary, onDismissRequest = dismiss) {
+                val maxHeight = with(LocalDensity.current) { LocalWindowInfo.current.containerSize.height.toDp() } * 0.7f
+                Column(modifier = Modifier.fillMaxWidth().heightIn(max = maxHeight)) {
+                    Column(modifier = Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState())) { content() }
+                    MiuixDialogActions(confirmText = "确认开启", destructive = true,
+                        confirmEnabled = !confirmingTools && currentTools.isNotEmpty(), cancelEnabled = !confirmingTools,
+                        onCancel = dismiss, onConfirm = confirm)
+                }
+            }
+        }
+    }
 }
 
 /**
@@ -956,11 +1047,8 @@ private fun McpToolSwitchRow(
             val colors = CouiPageDefaults.themeColors(dark)
             val view = LocalView.current
             val headerInteraction = remember { MutableInteractionSource() }
-            var optimisticChecked by remember(checked) { mutableStateOf(checked) }
-            val commitToggle: (Boolean) -> Unit = { target ->
-                optimisticChecked = target
-                onCheckedChange(target)
-            }
+            val optimisticChecked = checked
+            val commitToggle: (Boolean) -> Unit = onCheckedChange
 
             Column(
                 modifier = modifier
@@ -1227,4 +1315,73 @@ private fun McpDiscoveryTruncation.summaryRes(): Int = when (this) {
     McpDiscoveryTruncation.PAGE_LIMIT -> R.string.mcp_tools_truncated_page_limit
     McpDiscoveryTruncation.SIZE_LIMIT -> R.string.mcp_tools_truncated_size_limit
     McpDiscoveryTruncation.CURSOR_LOOP -> R.string.mcp_tools_truncated_cursor_loop
+}
+
+private data class ToolGroupSpec(val label: String, val names: Set<String>)
+
+/** 按名字前缀把工具归类，给「一键勾选」用。 */
+private fun toolGroups(tools: List<McpToolDefinition>): List<ToolGroupSpec> {
+    fun match(vararg keys: String) = tools
+        .filter { tool -> keys.any { tool.name.contains(it) } }
+        .map { it.name }
+        .toSet()
+    return listOf(
+        ToolGroupSpec("Issue", match("issue")),
+        ToolGroupSpec("PR", match("pull_request")),
+        ToolGroupSpec("仓库与文件", match("repo", "file", "branch", "commit", "gist")),
+        ToolGroupSpec("Actions", match("workflow", "actions", "check")),
+        ToolGroupSpec("搜索", match("search")),
+    ).filter { it.names.isNotEmpty() }
+}
+
+/** GitHub 预设里额外开启的写操作；删除类一律不碰。 */
+private val GITHUB_PRESET_WRITES = setOf(
+    "issue_write",
+    "add_issue_comment",
+    "create_pull_request",
+    "merge_pull_request",
+    "create_branch",
+    "create_or_update_file",
+    "push_files",
+    "create_repository",
+)
+
+private fun githubPresetNames(tools: List<McpToolDefinition>): Set<String> = tools
+    .filter { it.readOnlyHint == true || it.name in GITHUB_PRESET_WRITES }
+    .map { it.name }
+    .toSet()
+
+private fun isGitHubServer(server: McpServerSetting): Boolean =
+    server.url.contains("githubcopilot", ignoreCase = true)
+
+@Composable
+private fun McpToolPresets(
+    server: McpServerSetting, enabled: Boolean,
+    onEnable: (Set<String>) -> Unit, onDisableAll: () -> Unit,
+) {
+    if (server.tools.isEmpty()) return
+    val readOnly = server.tools.filter { it.readOnlyHint == true }.map { it.name }.toSet()
+    val groups = listOf(ToolGroupSpec("全选只读（${readOnly.size}）", readOnly)) +
+        (if (isGitHubServer(server)) listOf(ToolGroupSpec("GitHub 预设", githubPresetNames(server.tools))) else emptyList()) +
+        toolGroups(server.tools)
+    val body: @Composable () -> Unit = {
+        groups.forEach { group ->
+            if (LocalUiStyle.current == AppearanceUiStyle.COUI) {
+                CouiPreference(title = group.label, enabled = enabled && group.names.isNotEmpty(), onClick = { onEnable(group.names) })
+            } else {
+                ArrowPreference(title = group.label, enabled = enabled && group.names.isNotEmpty(), onClick = { onEnable(group.names) })
+            }
+        }
+        if (LocalUiStyle.current == AppearanceUiStyle.COUI) {
+            CouiPreference(title = "全部关闭", enabled = enabled, onClick = onDisableAll)
+        } else {
+            ArrowPreference(title = "全部关闭", enabled = enabled, onClick = onDisableAll)
+        }
+    }
+    if (LocalUiStyle.current == AppearanceUiStyle.COUI) {
+        Group(title = "工具预设") { body() }
+    } else {
+        SmallTitle("工具预设")
+        Card(modifier = Modifier.padding(horizontal = 12.dp).padding(bottom = 12.dp)) { body() }
+    }
 }

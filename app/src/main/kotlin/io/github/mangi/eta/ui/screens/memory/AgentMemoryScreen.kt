@@ -1,5 +1,9 @@
 package io.github.mangi.eta.ui.screens.memory
 
+import top.yukonga.miuix.kmp.preference.ArrowPreference
+import io.github.mangi.eta.ui.components.coui.CouiPageBottomSpacer
+import io.github.mangi.eta.ui.components.coui.CouiScaffoldPage
+import io.github.mangi.eta.ui.components.MiuixScaffoldPage
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.animateColorAsState
@@ -89,9 +93,69 @@ import top.yukonga.miuix.kmp.window.WindowDialog
 
 private enum class MemoryViewMode { Preview, Edit }
 
-@OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun AgentMemoryScreen(
+    state: AgentMemoryUiState,
+    onAction: (AgentMemoryAction) -> Unit,
+    onOpenDocument: () -> Unit = {},
+) {
+    state.notice?.let { notice ->
+        when (LocalUiStyle.current) {
+            AppearanceUiStyle.COUI -> {
+                CouiNoticeDialog(
+                    visible = true,
+                    title = stringResource(R.string.ui_memory_b55ff5),
+                    message = notice,
+                    confirmText = stringResource(R.string.ui_knew_cb63c6),
+                    onDismissRequest = { onAction(AgentMemoryAction.DismissNotice) },
+                )
+            }
+            AppearanceUiStyle.MIUIX -> {
+                WindowDialog(
+                    show = true,
+                    title = stringResource(R.string.ui_memory_b55ff5),
+                    summary = notice,
+                    onDismissRequest = { onAction(AgentMemoryAction.DismissNotice) },
+                ) {
+                    TextButton(
+                        text = stringResource(R.string.ui_knew_cb63c6),
+                        onClick = { onAction(AgentMemoryAction.DismissNotice) },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+            }
+        }
+    }
+    val summary = stringResource(R.string.memory_document_row_summary,
+        formatBytes(state.draftBytes), formatBytes(state.maxBytes))
+    when (LocalUiStyle.current) {
+        AppearanceUiStyle.COUI -> CouiScaffoldPage(
+            title = stringResource(R.string.ui_memory_b55ff5),
+            onBack = { onAction(AgentMemoryAction.NavigateBack) },
+        ) {
+            MemorySettingsGroup(state, onAction)
+            Group {
+                CouiPreference(title = "MEMORY.md", summary = summary, onClick = onOpenDocument)
+            }
+            CouiPageBottomSpacer()
+        }
+        AppearanceUiStyle.MIUIX -> MiuixScaffoldPage(
+            title = stringResource(R.string.ui_memory_b55ff5),
+            onBack = { onAction(AgentMemoryAction.NavigateBack) },
+        ) {
+            item(key = "memory_settings") { MemorySettingsGroup(state, onAction) }
+            item(key = "memory_document") {
+                Card(modifier = Modifier.padding(horizontal = 12.dp).padding(bottom = 12.dp)) {
+                    ArrowPreference(title = "MEMORY.md", summary = summary, onClick = onOpenDocument)
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+internal fun MemoryDocumentScreen(
     state: AgentMemoryUiState,
     onAction: (AgentMemoryAction) -> Unit,
 ) {
@@ -137,13 +201,6 @@ internal fun AgentMemoryScreen(
                         .imePadding()
                         .navigationBarsPadding(),
                 ) {
-                    AnimatedVisibility(
-                        visible = !imeVisible,
-                        enter = fadeIn() + expandVertically(),
-                        exit = fadeOut() + shrinkVertically(),
-                    ) {
-                        MemorySettingsGroup(state = state, onAction = onAction)
-                    }
                     MemoryDocumentCard(
                         state = state,
                         mode = currentMode,
@@ -194,13 +251,6 @@ internal fun AgentMemoryScreen(
                         .imePadding()
                         .navigationBarsPadding(),
                 ) {
-                    AnimatedVisibility(
-                        visible = !imeVisible,
-                        enter = fadeIn() + expandVertically(),
-                        exit = fadeOut() + shrinkVertically(),
-                    ) {
-                        MemorySettingsGroup(state = state, onAction = onAction)
-                    }
                     MemoryDocumentCard(
                         state = state,
                         mode = currentMode,
@@ -292,9 +342,46 @@ private fun MemorySettingsGroup(
     state: AgentMemoryUiState,
     onAction: (AgentMemoryAction) -> Unit,
 ) {
+    val injected = remember(state.savedContent, state.enabled) {
+        if (!state.enabled) null else runCatching {
+            val snapshot = io.github.mangi.eta.data.repository.AgentMemoryRepository.snapshot()
+            val context = io.github.mangi.eta.agent.memory.AgentMemoryContextBuilder.build(snapshot, null)
+            context.coreContent.length to context.headingIndex.lines().count { it.isNotBlank() }
+        }.getOrNull()
+    }
+    val injectedSummary = injected?.let {
+        stringResource(R.string.memory_injected_summary, it.first, it.second)
+    } ?: stringResource(R.string.memory_injected_disabled)
     when (LocalUiStyle.current) {
         AppearanceUiStyle.COUI -> {
             Group {
+                CouiPreference(title = stringResource(R.string.memory_injected_title),
+                    summary = injectedSummary, showChevron = false)
+                Divider()
+                CouiSwitchPreference(
+                    title = stringResource(R.string.auto_memory_title),
+                    summary = stringResource(R.string.auto_memory_summary),
+                    checked = state.autoMemoryEnabled,
+                    enabled = !state.isLoading && state.enabled,
+                    onCheckedChange = { onAction(AgentMemoryAction.ToggleAutoMemory(it)) },
+                )
+                Divider()
+                CouiSwitchPreference(
+                    title = stringResource(R.string.auto_skills_title),
+                    summary = stringResource(R.string.auto_skills_summary),
+                    checked = state.autoSkillsEnabled,
+                    enabled = !state.isLoading,
+                    onCheckedChange = { onAction(AgentMemoryAction.ToggleAutoSkills(it)) },
+                )
+                Divider()
+                CouiSwitchPreference(
+                    title = stringResource(R.string.memory_auto_compact_title),
+                    summary = stringResource(R.string.memory_auto_compact_summary),
+                    checked = state.autoCompactEnabled,
+                    enabled = !state.isLoading && state.enabled,
+                    onCheckedChange = { onAction(AgentMemoryAction.ToggleAutoCompact(it)) },
+                )
+                Divider()
                 CouiSwitchPreference(
                     title = stringResource(R.string.ui_enable_memory_4b69b7),
                     summary = stringResource(R.string.ui_after_closing_no_memory_will_be_injected_and_the_mod_db3d23),
@@ -316,6 +403,28 @@ private fun MemorySettingsGroup(
                     .padding(horizontal = 12.dp)
                     .padding(top = 8.dp, bottom = 12.dp),
             ) {
+                BasicComponent(title = stringResource(R.string.memory_injected_title), summary = injectedSummary)
+                SwitchPreference(
+                    title = stringResource(R.string.auto_memory_title),
+                    summary = stringResource(R.string.auto_memory_summary),
+                    checked = state.autoMemoryEnabled,
+                    enabled = !state.isLoading && state.enabled,
+                    onCheckedChange = { onAction(AgentMemoryAction.ToggleAutoMemory(it)) },
+                )
+                SwitchPreference(
+                    title = stringResource(R.string.auto_skills_title),
+                    summary = stringResource(R.string.auto_skills_summary),
+                    checked = state.autoSkillsEnabled,
+                    enabled = !state.isLoading,
+                    onCheckedChange = { onAction(AgentMemoryAction.ToggleAutoSkills(it)) },
+                )
+                SwitchPreference(
+                    title = stringResource(R.string.memory_auto_compact_title),
+                    summary = stringResource(R.string.memory_auto_compact_summary),
+                    checked = state.autoCompactEnabled,
+                    enabled = !state.isLoading && state.enabled,
+                    onCheckedChange = { onAction(AgentMemoryAction.ToggleAutoCompact(it)) },
+                )
                 SwitchPreference(
                     title = stringResource(R.string.ui_enable_memory_4b69b7),
                     summary = stringResource(R.string.ui_after_closing_no_memory_will_be_injected_and_the_mod_db3d23),

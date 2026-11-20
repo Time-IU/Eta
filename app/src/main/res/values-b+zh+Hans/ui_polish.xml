@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="personal_source_scope">个人分支；本机测试改动尚未全部发布。</string>
+    <string name="personal_source_notices">源码与第三方声明</string>
+</resources>

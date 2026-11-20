@@ -152,6 +152,30 @@ class ProviderComponentsTest {
     }
 
     @Test
+    fun newlyAddedBrandSourcesUseMatchingExistingAssetsOrNamedMonogram() {
+        assertEquals(R.drawable.model_logo_chatglm, providerBrandLogoRes(ProviderSourceTypes.ZHIPU))
+        assertEquals(R.drawable.model_logo_doubao, providerBrandLogoRes(ProviderSourceTypes.VOLCENGINE))
+        assertEquals(R.drawable.model_logo_hunyuan, providerBrandLogoRes(ProviderSourceTypes.HUNYUAN))
+        assertEquals(R.drawable.provider_logo_qianfan_initials, providerBrandLogoRes(ProviderSourceTypes.QIANFAN))
+    }
+
+    @Test
+    fun customSourceBrandingIsLimitedToTheTwoActualBuiltInPresets() {
+        val breeno = requireNotNull(BuiltinProviders.providerById(BuiltinProviders.BREENO_ID))
+        val local = requireNotNull(BuiltinProviders.providerById(BuiltinProviders.LOCAL_ID))
+        assertEquals(R.drawable.provider_logo_breeno_initial, providerBrandLogoRes(breeno))
+        assertEquals(R.drawable.provider_logo_local_network, providerBrandLogoRes(local))
+        assertNull(providerBrandLogoRes(ProviderSourceTypes.CUSTOM))
+        listOf(BuiltinProviders.BREENO_ID, BuiltinProviders.LOCAL_ID).forEach { reservedId ->
+            assertNull(providerBrandLogoRes(CustomProviderSetting(
+                id = reservedId, name = "User gateway", baseUrl = "https://gateway.example/v1",
+                isBuiltIn = false,
+            )))
+        }
+        assertEquals(R.drawable.provider_logo_kimi, providerBrandLogoRes(ProviderSourceTypes.MOONSHOT))
+    }
+
+    @Test
     fun customProviderUsesRecognizedBaseUrlAndUnknownSourceFallsBack() {
         val recognized = CustomProviderSetting(
             id = "custom-deepseek",

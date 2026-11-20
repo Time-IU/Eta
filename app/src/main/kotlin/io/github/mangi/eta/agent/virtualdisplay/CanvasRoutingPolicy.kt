@@ -205,7 +205,6 @@ internal object CanvasRoutingPolicy {
         ownPackage: String = "io.github.mangi.eta",
     ): CanvasLaunchPlan {
         if (!virtualDisplayEnabled) return CanvasLaunchPlan(CanvasTarget.MAIN_DISPLAY, "virtual_disabled")
-        if (!backendAvailable) return CanvasLaunchPlan(CanvasTarget.MAIN_DISPLAY, "backend_unavailable")
         if (requested == RequestedDisplay.MAIN) return CanvasLaunchPlan(CanvasTarget.MAIN_DISPLAY, "requested_main")
         val normalizedTarget = targetPackage?.trim().orEmpty()
         if (normalizedTarget.isNotEmpty()) {
@@ -218,6 +217,7 @@ internal object CanvasRoutingPolicy {
                 return CanvasLaunchPlan(CanvasTarget.MAIN_DISPLAY, "already_on_main")
             }
         }
+        if (!backendAvailable) return CanvasLaunchPlan(CanvasTarget.MAIN_DISPLAY, "backend_unavailable")
         return when (requested) {
             RequestedDisplay.VIRTUAL -> CanvasLaunchPlan(CanvasTarget.VIRTUAL_DISPLAY, "requested_virtual")
             RequestedDisplay.AUTO -> CanvasLaunchPlan(CanvasTarget.VIRTUAL_DISPLAY, "auto_virtual")

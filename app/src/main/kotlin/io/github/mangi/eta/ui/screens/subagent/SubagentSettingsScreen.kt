@@ -1,5 +1,7 @@
 package io.github.mangi.eta.ui.screens.subagent
 
+import io.github.mangi.eta.ui.model.AgentModelPickerUiState
+import io.github.mangi.eta.data.model.SubagentModelGrant
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -420,6 +422,7 @@ internal fun SubagentSettingsScreen(
                     }
                 }
 
+                SubagentAdvancedSettings(subagentSettings, pickerState, subagentEnabled)
                 Group(title = "Built-in Subagents") {
                     SubagentProfile.BUILTIN_PROFILES.forEachIndexed { index, profile ->
                         CouiPreference(
@@ -648,6 +651,9 @@ internal fun SubagentSettingsScreen(
                     }
                 }
 
+                item(key = "advanced_subagent_settings") {
+                    SubagentAdvancedSettings(subagentSettings, pickerState, subagentEnabled)
+                }
                 item(key = "builtin_group") {
                     SmallTitle("Built-in Subagents")
                     Card(
@@ -808,5 +814,196 @@ private fun SubagentProfileDetailContent(
                 }
             }
         }
+    }
+}
+
+private enum class SubagentPolicyEditor { Parallel, Rounds, Failures, Authorized }
+
+@Composable
+private fun SubagentAdvancedSettings(
+    settings: SubagentSettings,
+    pickerState: AgentModelPickerUiState,
+    enabled: Boolean,
+) {
+    val scope = rememberCoroutineScope()
+    var editor by remember { mutableStateOf<SubagentPolicyEditor?>(null) }
+    var number by remember { mutableStateOf("") }
+    var query by remember { mutableStateOf("") }
+    var selected by remember { mutableStateOf<Set<String>>(emptySet()) }
+    var saving by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
+    val models = pickerState.providerGroups.flatMap { it.models }
+    val idToApiId = models.associate { it.id to it.modelId }
+    fun canonical(id: String): String = idToApiId[id] ?: id
+    fun persist(next: SubagentSettings, close: Boolean = false) {
+        if (saving) return
+        saving = true
+        error = null
+        scope.launch {
+            try {
+                RuntimeConfigRepository.setSubagentSettings(next)
+                if (close) editor = null
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (failure: Exception) {
+                error = failure.message ?: "无法保存子智能体配置，请重试"
+            } finally {
+                saving = false
+            }
+        }
+    }
+    val body: @Composable () -> Unit = {
+        listOf(
+            Triple(SubagentPolicyEditor.Parallel, "并行上限", settings.maxParallel),
+            Triple(SubagentPolicyEditor.Rounds, "单次轮次上限", settings.maxRounds),
+            Triple(SubagentPolicyEditor.Failures, "连续失败中止（0 为关闭）", settings.failureAbortThreshold),
+        ).forEach { (target, title, current) ->
+            SubagentPolicyPreference(title, current.toString(), enabled && !saving) {
+                number = current.toString()
+                error = null
+                editor = target
+            }
+        }
+        if (LocalUiStyle.current == AppearanceUiStyle.COUI) {
+            CouiSwitchPreference(
+                title = "允许主 Agent 为子智能体选择模型",
+                summary = "仅从授权模型中选择；仅影响新会话",
+                checked = settings.allowModelSelection,
+                enabled = enabled && !saving,
+                onCheckedChange = { persist(settings.copy(allowModelSelection = it)) },
+            )
+        } else {
+            SwitchPreference(
+                title = "允许主 Agent 为子智能体选择模型",
+                summary = "仅从授权模型中选择；仅影响新会话",
+                checked = settings.allowModelSelection,
+                enabled = enabled && !saving,
+                onCheckedChange = { persist(settings.copy(allowModelSelection = it)) },
+            )
+        }
+        SubagentPolicyPreference(
+            "授权模型",
+            if (settings.effectiveGrants.isEmpty()) "未勾选：不限制已启用模型"
+            else "已授权 ${settings.effectiveGrants.size} 个模型",
+            enabled && settings.allowModelSelection && !saving,
+        ) {
+            selected = settings.effectiveGrants.map { canonical(it.modelId) }.toSet()
+            query = ""
+            error = null
+            editor = SubagentPolicyEditor.Authorized
+        }
+        error?.let { Text(it, color = StatusError, modifier = Modifier.padding(16.dp)) }
+    }
+    if (LocalUiStyle.current == AppearanceUiStyle.COUI) {
+        Group(title = "运行限制与模型授权") { body() }
+    } else {
+        SmallTitle("运行限制与模型授权")
+        Card(modifier = Modifier.padding(horizontal = 12.dp).padding(bottom = 12.dp)) { body() }
+    }
+    val active = editor
+    if (active != null) {
+        val authorized = active == SubagentPolicyEditor.Authorized
+        val range = when (active) {
+            SubagentPolicyEditor.Parallel -> 1..64
+            SubagentPolicyEditor.Rounds -> 1..200
+            else -> 0..50
+        }
+        val title = when (active) {
+            SubagentPolicyEditor.Parallel -> "并行上限"
+            SubagentPolicyEditor.Rounds -> "单次轮次上限"
+            SubagentPolicyEditor.Failures -> "连续失败中止"
+            SubagentPolicyEditor.Authorized -> "授权给主 Agent 的模型"
+        }
+        val confirm: () -> Unit = {
+            val next = if (authorized) {
+                // Retain existing per-model effort restrictions. Toggling a model
+                // must not silently expand an existing authorization grant.
+                val previous = settings.effectiveGrants.associateBy { canonical(it.modelId) }
+                settings.copy(
+                    allowedModelIds = selected.toList(),
+                    allowedGrants = selected.map { id ->
+                        SubagentModelGrant(id, previous[id]?.allowedEfforts.orEmpty())
+                    },
+                )
+            } else {
+                val value = number.toIntOrNull()
+                if (value == null || value !in range) null else when (active) {
+                    SubagentPolicyEditor.Parallel -> settings.copy(maxParallel = value)
+                    SubagentPolicyEditor.Rounds -> settings.copy(maxRounds = value)
+                    else -> settings.copy(failureAbortThreshold = value)
+                }
+            }
+            if (next != null) persist(next, close = true)
+        }
+        val content: @Composable () -> Unit = {
+            if (authorized) {
+                if (LocalUiStyle.current == AppearanceUiStyle.COUI) {
+                    CouiTextField(value = query, onValueChange = { query = it }, label = "搜索模型或服务商", singleLine = true)
+                    CouiButton(text = "清空授权（不限制）", enabled = !saving, onClick = { selected = emptySet() })
+                } else {
+                    TextField(value = query, onValueChange = { query = it }, label = "搜索模型或服务商", singleLine = true)
+                    TextButton(text = "清空授权（不限制）", enabled = !saving, onClick = { selected = emptySet() })
+                }
+                val groups = pickerState.filterGroups(query)
+                groups.forEach { group ->
+                    group.models.forEach { model ->
+                        val checked = model.modelId in selected
+                        val toggle: (Boolean) -> Unit = { value ->
+                            selected = if (value) selected + model.modelId else selected - model.modelId
+                        }
+                        if (LocalUiStyle.current == AppearanceUiStyle.COUI) {
+                            CouiSwitchPreference(title = model.displayName,
+                                summary = "${group.providerName} · ${model.modelId}",
+                                checked = checked, enabled = !saving, onCheckedChange = toggle)
+                        } else {
+                            SwitchPreference(title = model.displayName,
+                                summary = "${group.providerName} · ${model.modelId}",
+                                checked = checked, enabled = !saving, onCheckedChange = toggle)
+                        }
+                    }
+                }
+                val validIds = models.map { it.modelId }.toSet()
+                val invalid = selected - validIds
+                if (invalid.isNotEmpty()) {
+                    TextButton(text = "清理 ${invalid.size} 个失效授权", enabled = !saving,
+                        onClick = { selected = selected - invalid })
+                }
+            } else {
+                val label = "允许范围：${range.first}–${range.last}"
+                if (LocalUiStyle.current == AppearanceUiStyle.COUI) {
+                    CouiTextField(value = number, onValueChange = { number = it.filter(Char::isDigit).take(3) },
+                        label = label, singleLine = true)
+                } else {
+                    TextField(value = number, onValueChange = { number = it.filter(Char::isDigit).take(3) },
+                        label = label, singleLine = true)
+                }
+            }
+            error?.let { Text(it, color = StatusError) }
+        }
+        val canSave = !saving && (authorized || number.toIntOrNull()?.let { it in range } == true)
+        val dismiss: () -> Unit = { if (!saving) editor = null }
+        if (LocalUiStyle.current == AppearanceUiStyle.COUI) {
+            CouiConfirmDialog(visible = true, title = title, message = null,
+                confirmText = "保存", confirmEnabled = canSave, cancelEnabled = !saving,
+                onConfirm = confirm, onDismissRequest = dismiss) { content() }
+        } else {
+            WindowDialog(show = true, title = title, onDismissRequest = dismiss) {
+                val maxHeight = with(LocalDensity.current) { LocalWindowInfo.current.containerSize.height.toDp() } * 0.7f
+                Column(modifier = Modifier.fillMaxWidth().heightIn(max = maxHeight)) {
+                    Column(modifier = Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState())) { content() }
+                    MiuixDialogActions(confirmText = "保存", confirmEnabled = canSave,
+                        cancelEnabled = !saving, onCancel = dismiss, onConfirm = confirm)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SubagentPolicyPreference(title: String, summary: String, enabled: Boolean, onClick: () -> Unit) {
+    if (LocalUiStyle.current == AppearanceUiStyle.COUI) {
+        CouiPreference(title = title, summary = summary, enabled = enabled, onClick = onClick)
+    } else {
+        ArrowPreference(title = title, summary = summary, enabled = enabled, onClick = onClick)
     }
 }

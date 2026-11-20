@@ -1,5 +1,7 @@
 package io.github.mangi.eta.agent.model
 
+import io.github.mangi.eta.agent.prompt.AgentToolPolicyStore
+import io.github.mangi.eta.agent.prompt.PromptCustomizationStore
 import io.github.mangi.eta.agent.runtime.AgentEvent
 import io.github.mangi.eta.agent.runtime.AgentRunController
 import io.github.mangi.eta.agent.memory.AgentMemoryContext
@@ -19,6 +21,7 @@ import io.github.mangi.eta.data.model.ReasoningEffort
 import io.github.mangi.eta.data.provider.BuiltinProviders
 import io.github.mangi.eta.data.provider.GeminiModelCapabilities
 import io.github.mangi.eta.data.provider.ProviderSourceRegistry
+import io.github.mangi.eta.data.provider.isLocalEndpoint
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import io.github.mangi.eta.agent.terminal.TerminalExecutionContext
@@ -113,9 +116,13 @@ internal object AgentModelClient {
         toolFilter: ((JSONArray) -> JSONArray)? = null,
         onContextSnapshot: (AgentContextSnapshot) -> Unit = {},
         onTranscript: (List<ConversationMessage>) -> Unit = {},
+        restrictedToolNames: Set<String>? = null,
         onEvent: (AgentEvent) -> Unit = {}
     ): ModelResponse.Text {
         config.validate()
+        // 自定义提示词与工具白名单是正式配置：每次 run 开始读一次，避免轮内改动让前缀反复失效。
+        val customization = PromptCustomizationStore.load()
+        val toolPolicy = AgentToolPolicyStore.load()
         val initialCapabilities = capabilitiesProvider()
         val messages = AgentPromptBuilder.buildInitialMessages(
             config,
@@ -127,6 +134,9 @@ internal object AgentModelClient {
             rootAvailable = initialCapabilities.rootAvailable,
             roleplayContext = roleplayContext,
             executionContext = executionContext,
+            virtualScreenEnabled = initialCapabilities.virtualScreenEnabled,
+            virtualScreenFallbackEnabled = initialCapabilities.virtualScreenFallbackEnabled,
+            customization = customization,
         )
         if (rewriteReply) {
             messages.put(messages.length() - 1, AgentConversationCodec.userTextMessage(
@@ -145,11 +155,21 @@ internal object AgentModelClient {
         val transcript = JSONArray()
         // 旧 history 中的无效消息可能在组装时被跳过，系统边界不能由 history 条数倒推。
         val systemCount = AgentPromptBuilder.buildSystemMessages(
-            config, skillContext, memoryContext, initialCapabilities.rootAvailable, roleplayContext, executionContext,
+            config, skillContext, memoryContext, initialCapabilities.rootAvailable, roleplayContext, executionContext, initialCapabilities.virtualScreenEnabled, initialCapabilities.virtualScreenFallbackEnabled, customization,
         ).length()
+        // MCP 工具只在 run 开始时压一次：每轮重复解析这 190KB JSON 纯属浪费。
+        val remoteToolNames = (0 until additionalTools.length()).mapNotNull { index ->
+            additionalTools.optJSONObject(index)?.optJSONObject("function")?.optString("name")
+                ?.takeIf { it.startsWith("mcp_") }
+        }.toSet()
+        val compactedAdditionalTools = if (additionalTools.length() == 0) {
+            additionalTools
+        } else {
+            JSONArray(additionalTools.toString()).also { AgentToolSchemaCompactor.compactMcp(it) }
+
+        }
         fun toolsFor(capabilities: AgentToolCapabilities): JSONArray {
-            if (rewriteReply) return JSONArray()
-            val tools = AgentToolCatalog.build(
+            val built = AgentToolDirectory.build(
                 terminalTools = config.terminalTools,
                 browserTools = config.browserTools,
                 deviceDirectTools = config.deviceDirectTools,
@@ -161,14 +181,34 @@ internal object AgentModelClient {
                 memoryWritable = roleplayContext == null,
                 capabilities = capabilities,
                 localWebSearch = !config.usesHostedWebSearch,
-                disabledTools = Prefs.disabledTools(),
+                localProfile = LocalToolProfileStore.current(config.providerId, config.model),
+                policy = toolPolicy,
+                additionalTools = compactedAdditionalTools,
+                restrictedToolNames = restrictedToolNames,
+                rewriteReply = rewriteReply,
             )
-            for (index in 0 until additionalTools.length()) {
-                tools.put(additionalTools.opt(index))
+            // 子代理用 toolFilter 在父工具目录上裁剪；主运行不传，走原样。
+            val enabled = JSONArray().also { result ->
+                for (index in 0 until built.length()) {
+                    val schema = built.getJSONObject(index)
+                    val name = schema.optJSONObject("function")?.optString("name").orEmpty()
+                    if (Prefs.isToolEnabled(name)) result.put(schema)
+                }
             }
-            return toolFilter?.invoke(tools) ?: tools
+            return toolFilter?.invoke(enabled) ?: enabled
         }
         val tools = toolsFor(initialCapabilities)
+        // 只在请求侧丢最老轮次：数据库与界面一条不删；系统提示、记忆与当前输入永不裁。
+        val trimOutcome = if (rewriteReply || compactOnly) AgentHistoryTrimmer.Outcome() else
+            AgentHistoryTrimmer.trimInPlace(
+                messages = messages,
+                systemCount = systemCount,
+                contextWindow = config.knownContextWindow,
+                reservedTokens = AgentHistoryTrimmer.estimateTokens(tools.toString()),
+            )
+        if (trimOutcome.omittedMessages > 0) {
+            onEvent(AgentEvent.HistoryTrimmed(trimOutcome.omittedMessages, trimOutcome.omittedUserRounds))
+        }
         onEvent(
             AgentEvent.RunStarted(
                 initialImages = images.size,
@@ -181,16 +221,22 @@ internal object AgentModelClient {
         // Root 授权真正变化时整体重建；其余能力只增不减：短暂不可用的工具仍保留，执行时自行报告错误码。
         var promptRootAvailable = initialCapabilities.rootAvailable
         var publishedTools = tools
+        var promptVirtualScreenEnabled = initialCapabilities.virtualScreenEnabled
+        var promptVirtualScreenFallbackEnabled = initialCapabilities.virtualScreenFallbackEnabled
         fun toolsForRound(): JSONArray {
             val capabilities = capabilitiesProvider()
-            if (capabilities.rootAvailable != promptRootAvailable) {
+            if (capabilities.rootAvailable != promptRootAvailable ||
+                capabilities.virtualScreenEnabled != promptVirtualScreenEnabled ||
+                capabilities.virtualScreenFallbackEnabled != promptVirtualScreenFallbackEnabled) {
                 val systemMessages = AgentPromptBuilder.buildSystemMessages(
-                    config, skillContext, memoryContext, capabilities.rootAvailable, roleplayContext, executionContext,
+                    config, skillContext, memoryContext, capabilities.rootAvailable, roleplayContext, executionContext, capabilities.virtualScreenEnabled, capabilities.virtualScreenFallbackEnabled, customization,
                 )
                 for (index in 0 until systemMessages.length()) {
                     messages.put(index, systemMessages.getJSONObject(index))
                 }
                 promptRootAvailable = capabilities.rootAvailable
+                promptVirtualScreenEnabled = capabilities.virtualScreenEnabled
+                promptVirtualScreenFallbackEnabled = capabilities.virtualScreenFallbackEnabled
                 publishedTools = toolsFor(capabilities)
                 return publishedTools
             }
@@ -214,18 +260,24 @@ internal object AgentModelClient {
             messages = messages,
             tools = tools,
             provider = provider,
-            // 目录在运行内只增不减，可见不再等于可用：执行前用同一规则复核，
-            // 中途失去的能力返回与目录过滤一致的错误码，而不是让底层接口给出含糊的失败。
-            toolExecutor = AgentModelClient.ToolExecutor { call ->
-                val unavailable = AgentToolRequirements.find(call.name)
-                    ?.let { capabilitiesProvider().unavailableCode(call.name) }
-                if (unavailable == null) {
-                    toolExecutor.execute(call)
+            toolExecutor = ToolExecutor { call ->
+                if (!Prefs.isToolEnabled(call.name) || !toolPolicy.allows(call.name)) {
+                    ToolResult(JSONObject().put("ok", false).put("code", "TOOL_NOT_ALLOWED_BY_POLICY")
+                        .put("message", "该工具不在本次工具白名单中，未执行").toString())
+                } else if (restrictedToolNames != null && call.name !in restrictedToolNames) {
+                    ToolResult(JSONObject().put("ok", false).put("code", "REVIEW_TOOL_DENIED")
+                        .put("message", "此工具不属于自动复盘能力").toString())
                 } else {
-                    ToolResult(
-                        JSONObject().put("ok", false).put("code", unavailable)
-                            .put("message", "该工具当前不可用（$unavailable），本次未执行").toString(),
-                    )
+                    val unavailable = AgentToolRequirements.find(call.name)
+                        ?.let { capabilitiesProvider().unavailableCode(call.name) }
+                    if (unavailable == null) {
+                        toolExecutor.execute(call)
+                    } else {
+                        ToolResult(
+                            JSONObject().put("ok", false).put("code", unavailable)
+                                .put("message", "该工具当前不可用（$unavailable），本次未执行").toString(),
+                        )
+                    }
                 }
             },
             runController = runController,
@@ -234,6 +286,7 @@ internal object AgentModelClient {
             purpose = if (rewriteReply) ProviderRequestPurpose.REPLY_REWRITE else ProviderRequestPurpose.CHAT,
             roleplayContext = roleplayContext,
             initialSupplementIndex = initialSupplementIndex,
+            remoteToolNames = remoteToolNames,
             toolsForRound = ::toolsForRound,
         )
         val result = try {
@@ -270,7 +323,10 @@ internal object AgentModelClient {
     private fun ModelConfig.validate() {
         require(baseUrl.isNotBlank()) { "请先配置 API 地址" }
         when {
-            authMode == ProviderAuthModes.API_KEY -> require(apiKey.isNotBlank()) { "请先配置 API Key" }
+            ProviderAuthModes.isBorrowedVendor(authMode) -> Unit
+            authMode == ProviderAuthModes.API_KEY -> require(
+                apiKey.isNotBlank() || baseUrl.isLocalEndpoint(),
+            ) { "请先配置 API Key（本地地址可留空）" }
             ProviderAuthModes.isOAuth(authMode) -> {
                 require(providerId.isNotBlank()) { "账号登录缺少服务商标识，请重新选择服务商" }
                 require(apiKey.isEmpty()) { "账号登录配置不能包含 API Key" }

@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="refine_update_rate_limit">The GitHub API rate limit was reached (HTTP 403/429). This is not an offline status or proof of no update. Retry later or open the personal releases page. No access token is required.</string>
+    <string name="refine_update_dns">The GitHub hostname could not be resolved. Check your network or DNS and retry.</string>
+    <string name="refine_update_tls">The secure connection to GitHub failed. Check the device clock, proxy or certificate environment. Certificate validation will not be disabled.</string>
+    <string name="refine_update_timeout">The GitHub update request timed out. Check your network and retry.</string>
+    <string name="refine_update_http">The GitHub update API returned an unsuccessful HTTP status. Retry later or open releases.</string>
+    <string name="refine_update_response">The update response could not be understood. This is not treated as no update.</string>
+    <string name="refine_update_network">The GitHub update API could not be reached. Check the network or open releases.</string>
+    <string name="refine_open_releases">Open releases</string>
+    <string name="refine_canvas_explanation">Submitting Hook settings does not prove the new Hook code is loaded. This is the last completed synchronization result.</string>
+    <string name="refine_canvas_read_failed">Read failed · previous values are read-only</string>
+    <string name="refine_canvas_reading">Reading settings</string>
+    <string name="refine_canvas_action_failed">Operation failed · retry available</string>
+    <string name="refine_canvas_sync_failed">Saved locally · Hook sync failed</string>
+    <string name="refine_canvas_no_framework">Framework unavailable · Root still requires actual permission</string>
+    <string name="refine_canvas_confirmed">Last sync: submitted and read back</string>
+    <string name="refine_canvas_saving">Saving / synchronizing…</string>
+    <string name="refine_usage_tokens">Token usage</string>
+    <string name="refine_usage_session">Session statistics</string>
+    <string name="refine_usage_reasoning">reasoning %1$s</string>
+    <string name="refine_usage_subagents">Subagents (%1$d)</string>
+    <string name="refine_usage_turns_steps">%1$d turns · %2$d steps</string>
+    <string name="refine_usage_more">More details and latest record</string>
+    <string name="refine_usage_less">Hide details</string>
+    <string name="refine_usage_explain">Explain metric</string>
+    <string name="refine_usage_not_additive">Current context, the latest run record and session totals use different scopes. Do not add them together. Unknown values are not zero.</string>
+    <string name="refine_help_context">Estimated context for the current model request, not the sum of this conversation. Model limits come from its configuration.</string>
+    <string name="refine_help_cache">Cache reads, cache writes and uncached input use the application normalized prompt breakdown. Hit rate is cache reads divided by normalized input. Providers report different fields; missing data stays unknown. The latest record may aggregate multiple requests within one run.</string>
+    <string name="refine_help_output">Reasoning tokens are normally a subset of output, not an extra amount to add. Totals preserve existing accounting. Subagent breakdowns must not be counted twice.</string>
+    <string name="refine_help_ttft">Average wait to the first token, excluding later generation.</string>
+    <string name="refine_help_tps">Output tokens divided by decoding time, excluding tools.</string>
+    <string name="refine_help_time">Cumulative duration for this scope; parallel time differs from wall clock.</string>
+    <string name="refine_help_subagent">Subtask breakdown; avoid counting it again in totals.</string>
+    <string name="refine_help_steps">Turns, execution steps and request counts are separate metrics.</string>
+    <string name="refine_help_compaction">Recorded compaction/archive/payback values; never substitute another scope.</string>
+</resources>

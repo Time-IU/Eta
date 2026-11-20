@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="overlay_permission_choose_app">Your system opened the overlay-permission list. Choose Eta and review the permission.</string>
+    <string name="overlay_permission_details_fallback">The direct overlay page is unavailable. Open “Display over other apps” from Eta’s app info, or find Eta in your system settings.</string>
+    <string name="overlay_permission_open_failed">Unable to open the overlay-permission settings. Open system Settings → Apps → Special app access → Display over other apps → Eta.</string>
+</resources>

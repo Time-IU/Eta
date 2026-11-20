@@ -9,6 +9,9 @@ import io.github.mangi.eta.agent.runtime.AgentRunCancelledException
 import io.github.mangi.eta.agent.runtime.AgentRunController
 import io.github.mangi.eta.agent.runtime.AgentTokenUsage
 import io.github.mangi.eta.agent.skill.SkillContext
+import io.github.mangi.eta.data.model.ReasoningEffort
+import io.github.mangi.eta.data.model.enabledModel
+import io.github.mangi.eta.data.model.enabledModelByApiId
 import io.github.mangi.eta.agent.terminal.TerminalExecutionContext
 import io.github.mangi.eta.agent.tool.AgentToolCapabilities
 import java.util.concurrent.ConcurrentHashMap
@@ -18,6 +21,18 @@ import org.json.JSONObject
 /**
  * 执行单次 `subagent` 工具调用：管理独立子上下文、过滤工具目录、实时镜像内部步骤，并向父 Agent 返回结构化摘要。
  */
+/**
+ * 授权模型解析结果：内部 id（UUID，存储用）↔ 对外 modelId（主 Agent 看到并传回的）↔ 显示名。
+ *
+ * 两者混用是之前「授权了却选不中」「面板显示一串 UUID」的根因，这里统一收口。
+ */
+private data class GrantedModel(
+    val uuid: String,
+    val apiId: String,
+    val displayName: String,
+    val allowedEfforts: List<String>,
+)
+
 internal class SubagentExecutor(
     private val conversationKey: String,
     private val parentController: AgentRunController,
@@ -30,12 +45,40 @@ internal class SubagentExecutor(
     private val executionContext: TerminalExecutionContext?,
     private val onProgress: (AgentEvent.SubagentProgress) -> Unit,
     private val nanoTime: () -> Long = System::nanoTime,
+    /** 主 Agent 指定模型时的配置来源（modelId, effortWire）；未开启放行时不会被调用。 */
+    private val configForOverride: (suspend (String?, String?) -> AgentModelClient.ModelConfig)? = null,
 ) {
     private val latestSnapshots = ConcurrentHashMap<String, String>()
 
     fun latestSnapshotJson(toolCallId: String): String? = latestSnapshots[toolCallId]
 
+    /** 同一主 Agent 下存活的子智能体计数（按对话隔离）；达到并行上限时拒绝新的派发。 */
+    private val concurrencyKey: String get() = conversationKey
+
     fun execute(
+        parentRound: Int,
+        toolCall: AgentModelClient.ToolCall,
+    ): AgentModelClient.ToolResult {
+        val limit = runCatching {
+            kotlinx.coroutines.runBlocking {
+                io.github.mangi.eta.data.datastore.SettingsDataStore.subagentSettings()
+            }.maxParallel
+        }.getOrDefault(8)
+        if (!SubagentConcurrency.tryAcquire(concurrencyKey, limit)) {
+            return errorResult(
+                "SUBAGENT_LIMIT_REACHED",
+                "同一主 Agent 下已有 $limit 个子智能体在运行，本次派发被拒绝；" +
+                    "请等现有子智能体结束，或在设置里调高并行上限。",
+            )
+        }
+        return try {
+            executeInternal(parentRound, toolCall)
+        } finally {
+            SubagentConcurrency.release(concurrencyKey)
+        }
+    }
+
+    private fun executeInternal(
         parentRound: Int,
         toolCall: AgentModelClient.ToolCall,
     ): AgentModelClient.ToolResult {
@@ -97,21 +140,100 @@ internal class SubagentExecutor(
 
         val profile = entry.profile
         val subagentId = entry.subagentId
+        if (profile.allowScreenTools) {
+            SubagentSessionStore.releaseRunning(conversationKey, subagentId)
+            return errorResult("SUBAGENT_SCREEN_ISOLATION_UNAVAILABLE",
+                "当前 GUI 按运行独占；screen 子代理需要独立 GUI 租约，暂不借用父运行权限。请由主 Agent 使用现有 GUI 工具完成。")
+        }
         val childController = AgentRunController()
         val controllerBinding = parentController.register(childController::cancel)
 
-        val resolvedConfig = runCatching { configProvider() }.getOrElse { throwable ->
+        val requestedModel = args.optString("model").trim().takeIf {
+            it.isNotBlank() && it.lowercase() !in setOf("default", "primary", "inherit", "auto")
+        }
+        val requestedEffort = args.optString("reasoning_effort").trim().takeIf { it.isNotBlank() }
+        val subagentSettings = runCatching {
+            kotlinx.coroutines.runBlocking {
+                io.github.mangi.eta.data.datastore.SettingsDataStore.subagentSettings()
+            }
+        }.getOrNull()
+        val allowModelPick = subagentSettings?.allowModelSelection == true
+        val grants = if (allowModelPick) subagentSettings?.effectiveGrants.orEmpty() else emptyList()
+
+        // 授权里存的是模型内部 id（UUID），主 Agent 看到并传回来的是对外 modelId（如 cn:hy3）。
+        // 这里解析一次，后续统一用 GrantedModel，避免两套 id 混用。
+        val providerModels = runCatching {
+            kotlinx.coroutines.runBlocking {
+                io.github.mangi.eta.data.repository.ProviderRepository.ensureBuiltInsMerged()
+                io.github.mangi.eta.data.repository.ProviderRepository.allProviders()
+            }
+        }.getOrDefault(emptyList())
+        val granted = grants.mapNotNull { grant ->
+            // 优先按对外 id 解析（新数据），回退按内部 UUID（旧数据）。
+            val resolved = providerModels.enabledModelByApiId(grant.modelId)
+                ?: providerModels.enabledModel(grant.modelId)
+                ?: return@mapNotNull null
+            val selectable = resolved.model.reasoningCapabilities
+                ?.selectableEfforts?.map { it.wireValue }.orEmpty()
+            GrantedModel(
+                // 内部调用仍需要真实 UUID；对外一律用 apiId。
+                uuid = resolved.model.id,
+                apiId = resolved.model.modelId,
+                displayName = resolved.model.displayName.ifBlank { resolved.model.modelId },
+                allowedEfforts = if (grant.allowedEfforts.isEmpty()) {
+                    selectable
+                } else {
+                    selectable.filter { it in grant.allowedEfforts }
+                },
+            )
+        }
+
+        val requestedGrant = requestedModel?.let { raw ->
+            granted.singleOrNull { it.apiId == raw || it.uuid == raw }
+        }
+        val autoGrant = if (allowModelPick && requestedModel == null) granted.firstOrNull() else null
+        val selectedGrant = requestedGrant ?: autoGrant
+        fun rejectConfig(code: String, message: String): AgentModelClient.ToolResult {
+            SubagentSessionStore.releaseRunning(conversationKey, subagentId)
+            controllerBinding.close()
+            return errorResult(code, message)
+        }
+        if (allowModelPick && requestedModel != null && requestedGrant == null) {
+            return rejectConfig("MODEL_NOT_AUTHORIZED", "模型没有被明确授权；请从子智能体设置已授权的完整模型 id 中选择。")
+        }
+        if (allowModelPick && requestedEffort != null) {
+            val wire = ReasoningEffort.fromWireValue(requestedEffort)?.wireValue ?: requestedEffort
+            val options = selectedGrant?.allowedEfforts.orEmpty()
+            if (wire !in options) {
+                return rejectConfig("SUBAGENT_EFFORT_UNSUPPORTED", "该授权模型不支持此思考档位；可选：${options.joinToString(", ")}。")
+            }
+        }
+        val effectiveModelId = selectedGrant?.uuid
+        val effectiveEffort = requestedEffort?.let { ReasoningEffort.fromWireValue(it)?.wireValue ?: it }
+        val useOverride = allowModelPick && configForOverride != null && effectiveModelId != null
+        if (allowModelPick && requestedModel != null && !useOverride) {
+            return rejectConfig("SUBAGENT_CONFIG_ERROR", "当前运行无法应用授权模型，未改用其它模型。")
+        }
+        val resolvedConfig = runCatching {
+            if (useOverride) {
+                kotlinx.coroutines.runBlocking { configForOverride!!.invoke(effectiveModelId, effectiveEffort) }
+            } else {
+                configProvider()
+            }
+        }.getOrElse { throwable ->
             SubagentSessionStore.releaseRunning(conversationKey, subagentId)
             controllerBinding.close()
             return errorResult("SUBAGENT_CONFIG_ERROR", throwable.message ?: "无法加载 Subagent 模型配置")
         }
         val modelLabel = resolvedConfig.modelDisplayName.ifBlank { resolvedConfig.model }
+        val effortLabel = resolvedConfig.effectiveReasoningEffort.wireValue
         val tracker = StepTracker(
             subagentId = subagentId,
             subagentType = profile.name,
             description = description,
             prompt = prompt,
             model = modelLabel,
+            effort = effortLabel,
             resumed = isResume,
         )
 
@@ -122,6 +244,8 @@ internal class SubagentExecutor(
             lastEmitNanos = now
             val encoded = tracker.snapshot().encode()
             latestSnapshots[toolCall.id] = encoded
+            // 消息层的更新在切走会话时可能被丢掉，这里再存一份供界面兜底读取。
+            SubagentRunRegistry.publishSnapshot(subagentId, toolCall.id, encoded)
             onProgress(
                 AgentEvent.SubagentProgress(
                     round = parentRound,
@@ -159,6 +283,27 @@ internal class SubagentExecutor(
             supportsSearchSuggestions = false,
         )
 
+        // 两道硬约束：轮次上限与重复动作中止。取值来自设置页，0 表示关闭重复检测。
+        val guard = runCatching {
+            kotlinx.coroutines.runBlocking {
+                io.github.mangi.eta.data.datastore.SettingsDataStore.subagentSettings()
+            }
+        }.getOrNull()
+        val maxRounds = (guard?.maxRounds ?: 40).coerceIn(1, 200)
+        val failureAbort = (guard?.failureAbortThreshold ?: 5).coerceIn(0, 50)
+        val guardLock = Any()
+        var abortCode: String? = null
+        var abortReason: String? = null
+        var consecutiveFailures = 0
+
+        // 登记到注册表：只有占用灵屏的子智能体，才应该收到「人工接管结束」这类定向消息。
+        SubagentRunRegistry.register(
+            conversationKey = conversationKey,
+            subagentId = subagentId,
+            controller = childController,
+            ownsScreen = profile.isToolAllowed("observe_screen"),
+        )
+
         return try {
             val response = AgentModelClient.complete(
                 config = subagentConfig,
@@ -170,11 +315,46 @@ internal class SubagentExecutor(
                 memoryContext = memoryContext,
                 additionalTools = profile.filterTools(mcpTools),
                 executionContext = executionContext,
+                // 灵屏工具是否可见由 profile 决定（screen 允许，其余禁用）；
+                // capabilities 沿用父任务的实际状态，让 screen 子代理与父共用同一块灵屏。
                 capabilitiesProvider = capabilitiesProvider,
                 sessionId = "$conversationKey-$subagentId",
                 operationId = "${toolCall.id}-$subagentId",
                 toolFilter = profile::filterTools,
                 onEvent = { childEvent ->
+                    synchronized(guardLock) {
+                        if (abortCode == null) {
+                            when (childEvent) {
+                                is AgentEvent.RoundStarted -> {
+                                    if (childEvent.round > maxRounds) {
+                                        abortCode = "SUBAGENT_ROUND_LIMIT"
+                                        abortReason = "已到轮次上限（$maxRounds 轮），子智能体被自动中止；" +
+                                            "任务确实需要更多轮次时，可在子智能体设置里调高上限后重新派发。"
+                                        childController.cancel()
+                                    }
+                                }
+
+                                is AgentEvent.ToolFinished -> {
+                                    // 只统计连续失败：滑屏、翻页这类正常任务本来就会重复很多次，
+                                    // 按「重复动作」判定会把正常任务误杀。
+                                    if (childEvent.success == false) {
+                                        consecutiveFailures += 1
+                                    } else {
+                                        consecutiveFailures = 0
+                                    }
+                                    if (failureAbort > 0 && consecutiveFailures >= failureAbort) {
+                                        abortCode = "SUBAGENT_FAILURE_ABORT"
+                                        abortReason = "连续 $consecutiveFailures 次工具调用失败" +
+                                            "（最后一次：${childEvent.name}），判断为无法推进，" +
+                                            "子智能体被自动中止并回报。"
+                                        childController.cancel()
+                                    }
+                                }
+
+                                else -> Unit
+                            }
+                        }
+                    }
                     val force = tracker.onChildEvent(childEvent)
                     publishSnapshot(force = force)
                 },
@@ -193,6 +373,8 @@ internal class SubagentExecutor(
                     .put("subagent_type", profile.name)
                     .put("description", description)
                     .put("model", modelLabel)
+                    .put("effort", effortLabel)
+                    .put("model_auto_selected", autoGrant != null)
                     .put("status", SubagentActivitySnapshot.STATUS_COMPLETED)
                     .put("tool_calls", tracker.toolCount())
                     .put("summary", response.content)
@@ -215,13 +397,18 @@ internal class SubagentExecutor(
                 tracker.partialOutput()
             }
 
-            val cancelled = parentController.isCancelled ||
-                childController.isCancelled ||
-                throwable is AgentRunCancelledException
-            val errorMessage = if (cancelled) {
-                "已停止"
-            } else {
-                throwable.message ?: throwable.javaClass.simpleName
+            // 命中硬约束时 childController 已被 cancel，这里要把它和「用户主动停止」区分开，
+            // 否则回报会变成含糊的「已停止」，父 Agent 不知道该不该重试。
+            val aborted = abortCode != null
+            val cancelled = !aborted && (
+                parentController.isCancelled ||
+                    childController.isCancelled ||
+                    throwable is AgentRunCancelledException
+                )
+            val errorMessage = when {
+                aborted -> abortReason ?: "子智能体已中止"
+                cancelled -> "已停止"
+                else -> throwable.message ?: throwable.javaClass.simpleName
             }
             if (cancelled) {
                 tracker.markCancelled(partial)
@@ -237,7 +424,14 @@ internal class SubagentExecutor(
             AgentModelClient.ToolResult(
                 content = JSONObject()
                     .put("ok", false)
-                    .put("code", if (cancelled) "SUBAGENT_CANCELLED" else "SUBAGENT_FAILED")
+                    .put(
+                        "code",
+                        when {
+                            aborted -> abortCode
+                            cancelled -> "SUBAGENT_CANCELLED"
+                            else -> "SUBAGENT_FAILED"
+                        },
+                    )
                     .put("subagent_id", subagentId)
                     .put("subagent_type", profile.name)
                     .put("description", description)
@@ -264,6 +458,7 @@ internal class SubagentExecutor(
                 command = latestSnapshots[toolCall.id],
             )
         } finally {
+            SubagentRunRegistry.unregister(subagentId)
             controllerBinding.close()
         }
     }
@@ -398,6 +593,7 @@ internal class SubagentExecutor(
         private val description: String,
         private val prompt: String,
         private val model: String,
+        private val effort: String,
         private val resumed: Boolean,
     ) {
         private val lock = Any()
@@ -618,6 +814,7 @@ internal class SubagentExecutor(
                 description = description,
                 prompt = prompt,
                 model = model,
+                effort = effort,
                 resumed = resumed,
                 status = status,
                 currentAction = currentAction,
@@ -654,5 +851,30 @@ internal class SubagentExecutor(
         private const val MAX_STEP_DETAIL_CHARS = 2_000
         private const val MAX_OUTPUT_CHARS = 12_000
         private const val MAX_STEPS = 48
+    }
+}
+
+/** 子智能体并行计数：同一主 Agent（按对话）下同时存活的子智能体总数。 */
+internal object SubagentConcurrency {
+    private val active = java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.atomic.AtomicInteger>()
+
+    @Synchronized
+    fun activeCount(key: String): Int = active[key]?.get() ?: 0
+
+    @Synchronized
+    fun tryAcquire(key: String, limit: Int): Boolean {
+        if (limit <= 0) return false
+        val counter = active.getOrPut(key) { java.util.concurrent.atomic.AtomicInteger() }
+        while (true) {
+            val current = counter.get()
+            if (current >= limit) return false
+            if (counter.compareAndSet(current, current + 1)) return true
+        }
+    }
+
+    @Synchronized
+    fun release(key: String) {
+        val counter = active[key] ?: return
+        if (counter.decrementAndGet() <= 0) active.remove(key, counter)
     }
 }

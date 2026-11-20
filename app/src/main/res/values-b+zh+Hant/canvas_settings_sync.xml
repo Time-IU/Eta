@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="canvas_hook_sync_failed">本機設定已儲存，但 Hook 未同步。Root 獨立執行仍可用。遠端授權可能保留舊值，請重試同步；統一閘門需要載入新版 Hook。</string>
+    <string name="canvas_hook_sync_unavailable">Hook 同步暫不可用或正在等待。本機設定保留，Root 獨立執行仍可用，不代表遠端已確認。請在框架連線後重試，並確保已載入新版 Hook。</string>
+    <string name="canvas_hook_sync_confirmed">已透過框架提交並讀回 Hook 設定；這不代表更新後的 Hook 已實際載入。</string>
+    <string name="canvas_hook_sync_retry">重試 Hook 同步</string>
+    <string name="canvas_settings_action_failed">本次操作未完成，請核對已儲存的設定後重試。Hook 同步狀態另外顯示，不視為遠端成功。</string>
+</resources>

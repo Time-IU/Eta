@@ -115,6 +115,7 @@ internal fun AgentTopBarChatHeader(
 ) {
     var showPopup by remember { mutableStateOf(false) }
     var showSheet by remember { mutableStateOf(false) }
+    // 每次打开面板换一个 key，搜索词、筛选与滚动位置都从头开始。
     var sheetSession by remember { mutableIntStateOf(0) }
     val selected = state.selectedModel
     val enabled = !isStreaming && !state.isChanging && state.providerGroups.isNotEmpty()
@@ -776,3 +777,34 @@ private val ModelPopupWidth = 248.dp
 private const val ModelPopupLimit = 8
 
 private const val SelectionConfirmMs = 140L
+
+/** Compact input entry reuses the custom dual-style searchable sheet and natural-height rows. */
+@Composable
+internal fun AgentModelPickerButton(
+    state: AgentModelPickerUiState,
+    isStreaming: Boolean,
+    popupAnchorTopPx: Int,
+    popupMaxHeight: Dp,
+    onModelSelected: (String) -> Unit,
+) {
+    var visible by remember { mutableStateOf(false) }
+    val enabled = !isStreaming && !state.isChanging && state.providerGroups.isNotEmpty()
+    LaunchedEffect(enabled) { if (!enabled) visible = false }
+    top.yukonga.miuix.kmp.basic.IconButton(onClick = { visible = true }, enabled = enabled, minWidth = 34.dp, minHeight = 34.dp) {
+        Text("✦", modifier = Modifier.semantics { contentDescription = "切换模型" })
+    }
+    if (LocalUiStyle.current == AppearanceUiStyle.COUI) {
+        val dark = CouiTheme.isDark
+        Dialog(visible = visible, onDismissRequest = { visible = false }, dark = dark,
+            title = stringResource(R.string.model_picker_title),
+            confirmAction = CouiDialogAction(text = stringResource(R.string.action_close), onClick = { visible = false }),
+            placement = CouiDialogPlacement.Bottom, material = rememberCouiDialogMaterial(dark), backdrop = rememberCouiWindowBackdrop()) {
+            if (visible) ModelSheetContent(state, onModelSelected = { visible = false; onModelSelected(it) })
+        }
+    } else {
+        WindowBottomSheet(show = visible, title = stringResource(R.string.model_picker_title),
+            onDismissRequest = { visible = false }, insideMargin = DpSize(0.dp, 0.dp)) {
+            if (visible) ModelSheetContent(state, onModelSelected = { visible = false; onModelSelected(it) })
+        }
+    }
+}

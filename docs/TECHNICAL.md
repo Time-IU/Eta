@@ -1,3 +1,5 @@
+> **未发布的集成工作区：不是已验收版本。** 本次把 `58a1faec` 的增量与 Time-IU 非官方定制基线 `17a73fdb` 整合；下面的原基线说明不是本次合并的测试结果。所有既有定制功能、语言、非官方归属及构建/许可说明继续保留；新增能力仅为待验证目标，不代表构建、设备端或视觉验收通过。远端采用 PolyForm Noncommercial 1.0.0，与当前 GPL-3.0 基线不同；尚未确认合并及再分发条件，本次不发布、不替换 LICENSE，也不作许可兼容结论。
+
 # 技术实现
 
 模块按进程与功能域安装针对性的 Hook。入口只负责生命周期、进程筛选、配置注入与安装结果汇总；具体目标定位和拦截逻辑留在各自功能域中。
@@ -255,3 +257,159 @@ Provider 按请求前缀复用缓存，前缀任一字节变化都会让其后�
 Eta 尚未成为默认助理且自动设置关闭时，按既定策略直接回到系统默认助理，不创建平行 Activity 会话。自动设置开启时，失败触发只在后台修复当前选择，当前长按仍立即回退；后续触发使用修复后的主路径。HyperOS 后续只需把厂商按键事件接到同一目标分发边界，不需要修改文本会话和 Runtime。
 
 配置界面按消费边界保存开关：Agent 与本地工具写入 App 私有配置，Hook 能力写入 LSPosed 侧 RemotePreferences。Hook 回调和延迟任务执行前都会读取对应开关，所以后续触发按当前配置执行。
+
+## 远端增量参考（58a1faec，未验收）
+
+以下按完整 Markdown 段落、表格及代码块补入尚未出现在本地正文中的远端描述。它们是待核对的设计与集成目标，不是当前集成已工作的证明；与上方本地约定冲突时不得据此删减本地功能，也不自动采用远端默认值或界面重设计。相关代码、设备权限及双界面行为需后续验证。
+
+### Hook 安装与诊断
+
+- 每个功能域通过 `HookRegistrar` 注册 Hook，并使用稳定 ID、`PROTECTIVE` 异常模式和统一优先级策略。
+- 安装结果区分 `INSTALLED`、`MISSING`、`FAILED`、`SKIPPED`，保留 `HookHandle`，便于定位 ROM 或目标 App 升级后的签名漂移。
+- 普通目标缺失与反射异常按功能域失败开放；`HookFailedError` 等框架级 `Error` 不会被普通异常隔离层吞掉。
+- `ModuleMain` 会尽早过滤无关进程并调用 `detach()`，避免在不需要的进程中继续保留生命周期回调。
+- 小布和双指识屏的混淆目标在安装期通过 DexKit 的字符串、签名和调用关系定位；签名足够唯一的接口使用结构反射。零候选或多个候选均放弃接管，不选择第一个结果。描述符缓存随 APK 的 DEX 校验值和查询规则版本失效，缓存命中后仍校验反射签名；解析桥在安装结束时关闭，运行回调不扫描 DEX。
+- DexKit 原生库先使用框架标准加载及模块安装目录；两者不可用时，从模块 APK 提取与当前进程位数匹配的原生库到宿主私有缓存。缓存按库内容的 SHA-256 隔离，复用前与 APK 字节校验，写入后设为只读并原子替换。库始终由模块 ClassLoader 加载，兼容压缩打包；日志分别报告原生库加载和 JNI 初始化失败，不记录 linker 消息中的文件路径。
+
+### Eta 原生数字助理
+
+Manifest 注册 `VoiceInteractionService`、与浮窗同进程的 `VoiceInteractionSessionService`、全屏 `TYPE_APPLICATION_OVERLAY` 助理浮窗以及 Android 助理角色资格要求的 `RecognitionService`。设置页只负责打开系统数字助理选择界面；浮窗使用已授予的麦克风权限；未授权时提供应用权限设置入口并保留键盘输入。
+
+`VoiceInteractionSession` 承接系统入口及系统提供的 Assist 数据，关闭自身 UI；`EtaAssistantOverlayService` 持有全屏窗口、语音序列动画、语音输入和键盘输入。窗口通过 `setFitInsetsTypes(0)` 绘制到状态栏、导航栏与显示开孔后方，可交互内容再通过状态栏、导航栏与 IME Insets 保持可触达，避免给根容器增加 Insets 后截断 edge-to-edge 背景。用户提交的文本交给 `AgentRuntimeClient`；请求、流式结果、前台工具收起、取消与归档沿用既有 Runtime 协议。前台工具执行前，Eta 自有入口在主线程定向移除窗口并通知系统会话 `hide()`，Runtime 等待该 View 真正 detach 后才继续；外部助手入口仍使用返回动作和目标包窗口确认。唤醒时已获麦克风权限就启动一次系统语音识别，最终识别结果直接提交；部分结果只显示在输入区。启动前限时查询当前语言的支持情况；服务不支持查询或超时时继续尝试识别，识别本身有 30 秒超时。可下载语音包时由用户点击请求系统下载，其他失败按网络、服务、麦克风、语言等原因提示并提供键盘输入。切换键盘、关闭、再次唤醒和前台工具收起都会销毁识别器并隔离迟到回调；当前不执行语音朗读。
+
+### system_server
+
+- **电源键接管**：Hook `PhoneWindowManagerExtImpl$OplusSpeechHandler.handleMessage()` 处理系统分发给小布的唤醒消息（`what == 0x3F3`）。目标为小布时直接执行原方法；目标为 Gemini 或 Eta 时才拦截并分发到对应入口。
+- **兼容配置**：三态目标写入字符串键；键不存在或值非法时读取旧 `POWER_KEY_TAKEOVER` 布尔协议，`true` 继续表示 Gemini，`false` 表示小布。新安装默认保持小布，旧用户不会因新增 Eta 被改写目标。
+- **数字助理配置修复**：独立自动设置开关开启后，开机、解锁、切用户及启动失败恢复时，通过 `AssistantManager` 异步校正当前 Gemini/Eta 目标的 `android.app.role.ASSISTANT` 与 secure settings。小布模式和开关关闭时不写系统配置；校验缓存及异步回调同时核对用户与目标，旧目标任务不会继续覆盖新选择。
+- **唤起逻辑优化**：Gemini 恢复原有 `VoiceInteractionManagerService`、`ACTION_ASSIST`、`ACTION_VOICE_COMMAND` 顺序；Eta 优先使用活动 `voiceinteraction` 会话，再在已经配置为默认助理时尝试同包 `ACTION_ASSIST` 桥。所有路径失败后立即执行小布原逻辑，不阻塞系统回调。
+- **息屏后维持 Hey Google 可用**：Hook `PhoneWindowManager.screenTurnedOff()`，在默认显示息屏后短延迟检查 Google 的 `SoftwareTrustedHotwordDetectorSession`。只有已有 `mSoftwareCallback` 且当前未 running 时，才恢复 `startListeningFromMicLocked()`；亮屏或恢复成功后会取消未执行任务。
+- **一圈即搜支持**：强制启用 `ContextualSearchManagerService`，将包名指向 Google App，并放行 `SystemUI` 与 ColorDirectService 的调用权限。作为一圈即搜的底层依赖始终执行，不可关闭。
+- **无障碍保护**：复用已验证的 `SystemServer.startOtherServices(TimingsTraceAndSlog)` 生命周期点，在系统服务启动完成后接入事件驱动保护。后台工作复用 Android `BackgroundThread`，不开模块线程、不轮询；开关默认关闭，开启请求需同时通过 signature 权限、真实发送 UID、服务声明与 APK signer 钉扎校验。保护只维护 owner 用户中的 Eta 组件和总开关，保留其他服务；断连时通过仅允许 `system` UID 调用的健康 Provider 确认，并对 Eta 做带次数上限和冷却的定向重绑。
+
+### ColorDirectService
+
+在 `com.coloros.directui.ui.CollectInfoActivity` 中按 `Intent → void` 签名和输入诊断字符串定位识屏入口，不依赖混淆方法名。读取 `startInfo.directExt` 中的 `fingerTrigger` 与 `touchInfo.fingerCount`，确认是双指识屏后，直接调用 `contextual_search` 服务触发一圈即搜，并关闭小布识屏页面；调用失败才回退小布原逻辑。
+
+### 小布助手
+
+消息处理、文本入口、聊天派发、当前房间、Agent、快速模式和历史序列化等目标按语义定位；历史读取、写入及指令派发按唯一签名定位。快速模式与深度思考保持取反关系，不把其他布尔状态当作思考开关。交付结果所需接口不完整时，不认领请求，避免请求被接管后无法回写小布。
+
+### vivo 小 V
+
+模块允许按系统选择推荐作用域，vivo 此功能只需勾选 `com.vivo.ai.copilot`。适配器仅在该包主进程加载，并在 `CopilotApp.onCreate` 完成后校验 versionCode `68503`（蓝心小 V `6.8.5.3`）。安装期完整解析 `CopilotSpeechGptLinker.sendChat(MessageParams)`、取消入口及内部事件协议；缺少目标或版本不匹配时保留原生行为。
+
+仅认领 `main_type=data`、`subs_type=ask` 的普通文字请求，拒绝图片与文件，使用独立的 `VIVO_CUSTOM_MODEL` / `VIVO_REQUIRE_PREFIX` 配置。默认要求 `/agent` 前缀。完整回答通道与有界后台队列就绪后才跳过原方法；认领后错误不再回退提交，避免重复请求。
+
+通过 `vt2.a` 的 `ICopilotEventCenter.post(ut2)` 派发 `yd` 状态 1/2/3/5，并保留原请求、trace ID、request ID 和 sid。结果 JSON 使用原生 `talk` 卡片与终态 `is_last`，在主线程写回最终回答；只有成功派发结果后才确认 Runtime outbox。新请求和 GPT/GPTONLY 取消动作中断旧 Runtime。最近六轮已完成的 Eta 对话按 sid 在内存中隔离，任务使用独立 `vivo` source 归档，不查询原生聊天数据库。实时语音通话、图片、文件、流式卡片和 TTS 尚未适配，详见 [vivo 小 V](VIVO_XIAOV.md)。
+
+### 超级小爱
+
+超级小爱入口当前锁定包名 `com.miui.voiceassist`、版本 `7.13.32.0016`（versionCode `507013032`），并且只在主进程与 `:core` 进程保留模块生命周期。版本不匹配或无法读取版本时不安装业务 Hook。
+
+适配器在 `OperationManager.setQueryInfo(String, String, JSONObject)` 原方法执行前暂存对话 ID、查询文本和可选的 `extra_image_file_id`，同时从 `z10.a.processed(Instruction)` 记录终态 `SpeechRecognizer.RecognizeResult`。`y00.r0.C0(Event): boolean` 收到 `Nlp.Request` 时，小爱已经通过 `APIUtils.buildEvent` 生成了新的 Event ID，因此适配器按查询文本关联输入上下文，不能要求它与 `setQueryInfo` 的对话 ID 相等。只有配置、前缀、图片引用和后台队列全部通过检查后才认领请求并返回发送成功；否则只调用一次原方法，让超级小爱继续原生处理。
+
+终态 ASR 会在 `setQueryInfo` 之前建立短时轮次状态。当前轮次确定由 Eta 接管时，`kh0.s0` 的 `execute` / `executeActionsAsync` 原生 Agent Action 会被跳过，避免本地动作链在模型请求认领前抢先打开设置或执行其他动作。轮次状态有时效并在小爱会话清理时释放；文档输入不会进入这条接管链路。
+
+图片 ID 只解析为当前小爱进程可读的单个本地图片文件，认领前校验存在性、大小和文件头，不扫描目录，也不记录文件路径。图片正文继续通过 Eta 现有的文件描述符传输链路进入 Agent Runtime。文档理解、多图片以及无法解析的图片不在当前接管范围内。
+
+结果使用超级小爱的 `FlowTemplateToastCard` 在主线程流式更新，完成后通过其原生 TTS 入口朗读。卡片、取消、结果恢复和 Runtime handoff 都绑定已认领的对话 ID 与独立的 `xiaoai` source；不会全局屏蔽小爱的卡片、RN 数据或 TTS，也不共享小布适配器的状态。
+
+该版本已通过小米真机验证。系统或 App 大版本更新后，仍需重新确认目标签名与完整链路。
+
+### Google App
+
+锁屏唤起 Gemini 浮窗后，Google 偶发只显示输入框、不启动录音。模块优先直接 Hook `FloatyActivity.onResume()`，找不到目标类时才回退到全局 `Activity.onResume()`；确认仍处于锁屏后，带去重地补发一次 `ACTION_VOICE_COMMAND`，避免用户还要手动点麦克风。亮屏（解锁态）唤起时同样存在该偶发问题，因此在同一 hook 点对称增加亮屏分支：确认仍处于解锁态后同样补发一次 `ACTION_VOICE_COMMAND`。去重粒度限定在同一个 `FloatyActivity` 实例，防止同一浮窗 `onResume` 短时间内重复补发，但关闭后立刻新开浮窗不会被上一次全局冷却挡住；两分支各自在延迟任务执行前复查对应开关与锁屏状态是否仍匹配。
+
+### Google App 系统化
+
+Google App 作为普通用户应用时，缺乏语音唤醒所需的系统权限，且容易 ColorOS 被自启管理杀掉。模块内置了 Magisk/KernelSU 模块，可将 Google App 安装为系统 priv-app。
+
+安装流程由 `GoogleAppSystemizerInstaller` 负责：
+
+- 检测 root 管理器类型（Magisk 或 KernelSU）
+- KernelSU 需先安装 meta-overlayfs 模块，否则不支持模块安装
+- 将内置的 Google App 系统化模块通过 root 执行安装
+- 安装成功后提示用户重启生效
+
+系统化安装是用户主动操作，不自动执行。安装入口位于设置页「高级」分组，点击后弹窗确认说明原因与操作方式，用户确认后才开始安装。
+
+### 配置与实时生效
+
+根导航使用 Miuix `NavDisplay` 与可保存路由栈，横移返回开关实时控制各路由的 `swipeDismiss`；预测性返回开关通过 `ApplicationInfo` 的系统开关应用，并无转场重建主 Activity。角色详情页开始新对话时，旧页先淡出，再由首页聊天淡入并轻微放大至原尺寸；仅在宿主完全透明时清除角色页面返回栈并重置导航呈现态，避免中间角色列表闪现。该过渡期间拦截重复点击和返回，取消时恢复可见与可交互状态；普通页面仍使用 Miuix 导航转场，会话数据由导航宿主外的 `AgentAppState` 持有。首页顶栏以两条长短横线打开会话抽屉，右侧横向省略号打开包含新建对话、终端与浏览器等操作的功能菜单。首页会话列表与聊天页在同一容器内并排布局，由双锚点拖动状态同步推移；停止拖动与动画后按实际锚点回写开关状态，即使动画被打断并回到原位也会同步。两者始终相邻，不使用背景侧栏加前景覆盖的层叠结构。聊天页保持固定布局尺寸，不随侧滑缩小；高频位移只在放置阶段读取，两页保持直角分界，不使用页面圆角或阴影；聊天区在绘制阶段按展开进度叠加暗色遮罩，侧栏保持正常亮度，点击暗区可收起。侧栏保持组合与滚动位置，避免起手时重建搜索和列表；关闭时隔离侧栏焦点与无障碍语义，展开时收起聊天键盘并隔离聊天焦点。手势由共同容器处理，保留 Compose 子级滚动与选择仲裁。侧栏搜索区和纯图标工具条独立占位，使用不透明纯色表面，不添加阴影；列表在中间视口内裁剪滚动，不穿透固定区域，不使用毛玻璃或边界分割线。工具图标保留无障碍名称与最小触摸高度。侧栏返回仅由已恢复的当前首页消费，半展开时也可关闭；拖动结束和每次返回或点击收起均直接使用系统手势结束触感，不按方向、终点变化或重复返回过滤，不自定义振动波形。设置页与标准二级页面共用自适应 Scaffold：手机显示可折叠大标题，宽屏改用小标题并将内容限制在居中的最大宽度内。界面缩放覆盖主 App 的 Compose Density，但宽屏判定保留缩放前 Density，避免缩放触发错误的手机/宽屏布局切换；系统助手浮层不应用界面缩放。
+
+各页面卡片统一使用 `EtaCard`，圆角由 `EtaCardDefaults.CornerRadius` 集中定义。模型列表分组的首尾圆角和浏览器内容裁剪复用同一值；交互反馈、主题颜色与各页面内容间距由原有组件与调用方管理。
+
+外观配置保存在现有 `eta_settings` DataStore。主题根统一解析跟随系统、浅色、深色、Monet 色彩风格、强调色与纯黑背景，并同步系统栏和 Markdown 的 Material 颜色桥接。顶栏使用 Miuix `LayerBackdrop` 捕获滚动内容，可选择高斯或渐进模糊；关闭模糊时，顶栏与聊天输入区都回退为主题纯色表面。页面滚动继续使用 Miuix 越界回弹和边界触感反馈，横屏安全区由 display cutout 与导航栏 Insets 共同约束。
+
+- **Eta Runtime 配置**：默认思考、网页浏览、设备直达、敏感信息读取、敏感设备操作和终端/文件工具保存在 App 私有配置中，不依赖 LSPosed。Runtime 在请求开始和每次工具执行前读取当前值；升级时会兼容迁移已有 RemotePreferences 值。
+- **Hook 配置**：`EtaApp` 在 `Application.onCreate` 注册 `XposedServiceHelper`，框架通过 `XposedProvider` 推送 binder 后拿到 `XposedService`。系统助手接管、Gemini 和一圈即搜等 Hook 开关通过 `XposedService.getRemotePreferences()` 写入 LSPosed 数据库；服务未连接时这些开关保持不可修改。
+- **Hook 进程**：`ModuleMain.onModuleLoaded` 调用 `XposedInterface.getRemotePreferences()` 缓存只读 `SharedPreferences` 到 `Prefs`。各 Hook 拦截回调入口直接读 `Prefs.isEnabled(key)`，关闭则走原逻辑；因此正常使用时，配置切换后的下一次相关触发表现为实时生效。这里的实时生效来自 Hook 入口读取当前配置，不是 libxposed API 102 的 hot reload 特性。
+- **延迟任务复查**：已排队的后台配置修复、`HotwordSelfHealHooks` retry 与 `GoogleAppHooks` 锁屏/亮屏语音命令会在执行前再次检查对应开关，避免用户在任务排队期间关闭开关后被旧任务绕过。
+
+### 个人数据直达
+
+- 标准 Android Provider：相册图片、音频、共享文件、日历、通讯录、通话记录、短信和下载记录。
+- ColorOS 数据源：通过固定 Provider 读取便签正文、待办、普通录音、通话录音与录音摘要；系统记忆优先由小布记忆进程内的只读 Hook 桥查询，再在桥不可用时回退到包含 SQLite 边车文件的 Root 临时快照。两条路径共用固定查询引擎，可检索记忆正文及其账单、日程、取件码、快递、地点和附件。
+- vivo 数据源：`PhoneCommandMain` 的 `vivo_personal` 后端通过 Root Provider 桥读取原子笔记与待办；固定字段与保护条件，输出 live 数据和 `eta-vivo:` 只读引用。读取详情时重新检查保护状态；接口缺列时关闭该来源。系统记忆及录音摘要仍未适配，详见 [vivo 个人上下文](VIVO_PERSONAL_CONTEXT.md)。
+- 个人上下文：位置按需读取最近系统位置；应用活动与使用时长依赖用户授予的使用情况访问权；闹钟、计时器、输入法剪贴板历史和 Health Connect 聚合值通过固定数据库只读快照查询。健康工具只返回指定时间窗口的汇总，不返回原始测量序列。
+- 通知历史：系统自身没有可用历史时不伪造旧记录。用户授予通知使用权后，Eta 从授权时点开始在独立本机数据库中保存标题、正文、来源包和时间，保留 7 天且最多 1000 条；查询结果仍按敏感工具规则从持久会话移除。
+- 个人订单：优先检索系统记忆已经识别的外卖、购物、快递、票券和出行信息。第三方应用导出的进程通信 Provider 不等于订单查询合同，Eta 不依赖其易变私有订单库。
+- QQ 与微信专用目录：仅扫描已验证的聊天图片缓存目录，按最近修改时间返回有界的文件元数据；不扫描视频、消息数据库、消息正文或任意其他应用私有目录。
+- 设备上缺少相应应用或 Provider 合同变动时，工具返回结构化不可用错误；不会改用遍历其他应用私有目录的方式猜测数据。
+
+### 内置浏览器
+
+`browser_use` 是运行在 Eta 内的 Agent 浏览器，基于共享离屏 WebView，不是简单调用系统 `ACTION_VIEW`。它可以在不抢占前台的情况下加载 JavaScript 网页、提取保留标题/段落/列表/链接等结构的正文、查找并操作页面元素、提交表单、滚动和截图；用户想查看过程时，可在 App 中挂载同一个 WebView 直接接管。外部打开链接仍由独立的 `open_uri` 工具负责，两种能力不会混淆。
+
+### 终端与文件
+
+- `android` 是原生 Android Shell，负责系统、应用、日志、Magisk 和设备文件操作。Root 会话会自动发现 Magisk、KernelSU 或 APatch 提供的 BusyBox，并以 standalone `ash` 补齐不在系统 PATH 中的 applet。交互式控制台例外：BusyBox 1.35–1.36 的 ash 在提示符处收到窗口尺寸变化信号会另起一行新提示符，命中这些版本时控制台改用系统 `sh`，并把 BusyBox applet 链接（`/data/local/tmp/eta/.busybox`）追加到 PATH 末尾。
+- Linux 用户态在 Alpine musl 与 Debian Trixie glibc 中二选一，选择持久化后由模型工具、块式终端和控制台共同使用；模型可见协议统一为 `environment=linux`。基础 rootfs 与基础工具分步安装，基础工具集不包含 Python 或 Node.js；Python profile 只安装 uv，再由 uv 全局安装最新正式版 Python，Node.js profile 安装当前可用的最新正式版。SSH 使用发行版最新稳定包，APK 分析在两个发行版中均可单独安装。Kimi Code profile 依赖 Node.js profile，通过 npm 安装最新正式版 `@moonshot-ai/kimi-code`（国内镜像优先），两个发行版均可使用；安装就绪后可在环境页一键启动 Kimi Web——以守护任务常驻 `kimi web`，从日志解析带 token 的本机地址并拉起系统浏览器。「哪些 profile 已装」以安装器写入的完成标记为准，App 侧只读标记；「现在能干什么」的能力检测另走一条路：在实际 Linux 环境里跑一次 `command -v` 批量采样，chroot 下以 root、proot 下以 proot 身份执行，判据与真正执行命令时的 PATH 完全一致。不在非 Root 进程里 stat rootfs 内容——rootfs 由 root 解包，其中的符号链接对 App 进程连 lstat 都会被拒（SELinux MLS 类别不匹配），`/usr/local/bin/node` 这类绝对链接的目标在宿主侧也不存在；环境不可用时回退到只判真实文件与目录的静态判定。Eta 通过独立 mount namespace + Root chroot 运行所选环境；Linux 默认在映射到 Eta Android 工作目录的 `/workspace` 中执行，共享存储位于 `/sdcard`。它不是安全沙箱，也不会取代 Android 环境。
+- 中国大陆网络下，Alpine APK 只尝试阿里云与官方 CDN；Debian 主仓库只尝试清华 TUNA 与 Debian 官方源，安全更新固定使用 Debian 官方源。成功的源会写回 rootfs 供后续 profile 和工具安装复用；APT 同时关闭易触发连接重置的 HTTP pipelining 并启用重试。GitHub 制品只尝试一个固定 HTTPS 下载入口，再回到官方地址，所有 rootfs/制品仍必须通过固定大小和 SHA-256 校验。
+
+可选工具支持卸载，卸载在 Linux 环境内执行清理脚本后撤销完成标记：Python 与 uv、Node 归档、Kimi Code、APK 分析会真正删除 Eta 自己下载的文件；由发行版包管理器安装的内容（Alpine 的 Node.js 包、两个发行版的 SSH）只撤销标记，系统包保留。被依赖的 profile 不能先卸（Kimi 依赖 Node），卸载入口在环境页对应行的动作区，带一次破坏性确认。
+
+### 会话存储与加载
+
+会话与消息落在 Room 库 `eta.db`，超长字段不按整列单行存储：`agent_text_chunks` 以 `(owner_table, owner_id, field, chunk_index)` 分块，每块 16,384 个 UTF-16 单元，业务列只留 `@eta:chunks:v1:<块数>:<字符数>` 引用头；读取时按引用头一次性 `StringBuilder(length)` 扩展还原，写入侧对单字段超过 1200 万字符保留尾部并按 JSON 元素边界切齐。分块边界不切 UTF-16 代理对。
+
+启动只把**选中会话**的消息与上下文读进内存，其余会话仅保留元数据占位（`Snapshot.partiallyLoadedConversationIds`）。切换会话时 `loadConversation` 按需补载，补载期间草稿、待发送图片、排队消息与编辑态原样保留，此时发送会等补载完成后重放。会话列表摘要改用一次索引查询（`conversationIndex` 取最新一条消息的首块，≤256 字符），不依赖消息是否已进内存。
+
+保存路径对占位会话只写元数据：`messages`、`history`、`journal` 不入库，且这批 id 被排除在「`stored.keys - current.keys` 即删除」的判定之外；会话真正被删除时由 `markDropped` 解除保护。这条约束是 #006 的配套，改保存逻辑时必须保留，否则重启后空列表会覆盖库内历史。
+
+会话分类归属是 `conversations.category_id` 的单列值，启动时全量读进 `AgentAppState.conversationCategoryIds`，这份映射就是归属的唯一权威。写入必须跟会话行一起落库：`persistConversations` 把映射交给 `AgentConversationStore.saveChanges(categoryIds = ...)`，构造 `ConversationEntity` 时直接取用；`categoryIds` 传 `null` 只表示「本次不改归属」（备份导入等路径沿用库内值）。**不要**在新会话刚分配 id 时对库里尚未插入的行执行 `UPDATE conversations SET category_id WHERE id = ?` —— 那一刻行不存在，UPDATE 打在 0 行上，随后的 INSERT 又把 `NULL` 写回该列，新会话就会掉进未分类（#002）。已有会话上改归属仍走 `setConversationCategory` 的单列 UPDATE。同理，「在分类下新建」的待定分类只做非空校验，不要因为分类表尚未加载就丢掉用户意图。
+
+纯文本量本身极大时优先降常驻、不降字段上限：实测 46 个会话、19,963 条消息加全部 checkpoint 全量还原为 9,580 万字符，约等于 192 MB UTF-16，正好等于一次启动的 Dalvik 分配总量（`192,148 KB`），也是 512 MB largeHeap 被顶穿、`StringBuilder` 分配失败的直接原因。图片附件目前仍以 base64 存在 `conversation_messages.images`（实测 6,099 万分字符），是下一步可外移到文件、库里只存路径的部分。
+
+### 会话级 Thinking Effort
+
+浮窗回复区按可用窗口高度提供稳定视口，正文增量只更新列表，不按字数反复启动面板缩放。回复中实际内容超出视口且面板停稳后，浮窗才用无回弹的弹簧从初始高度逐级升高；回复结束且首尾条目都可测量时，按实际内容高度平滑拟合并锁定本轮目标，避免旧滚动偏移再触发升高。用户一旦拖动或滚动，自动调高和拟合停止，改由手动锚点决定高度；键盘显示时也暂停自动调高和拟合。文本与思考增量复用聊天页的 80 毫秒合并策略，块边界、完成和取消先刷新待处理增量。程序化跟底不参与面板拖动；列表上滑展开保留，接管只认顶部把手的过顶拉取，滚动与惯性 fling 不再误入本体；接管后直接落在主聊天页并选中对应会话，不再打开独立对话页。输入区不再对系统 IME Insets 叠加弹簧尺寸动画。窗口移除时显式销毁 Composition，停止不可见动画。
+
+### 聊天流式渲染
+
+模型的 SSE 正文和思考增量先在 App 状态层按 80 ms 合并，减少高频列表状态写入；块边界和工具事件到达时先刷新待处理增量，事件顺序不变。Markdown 渲染层为项目自建（`ui/markdown/`），不依赖第三方渲染库：后台串行解析 GFM 语法树后立即转成自有块模型（段落、标题、代码、引用、提示块、列表、表格），块以源码偏移为身份，构建器按源码切片复用未变化块的实例，组合期直接跳过，只有尾部块重建文本与布局；链接与行内代码颜色在构建期写入文档，主题切换后整体重建。数学公式暂不排版，按行内代码或代码块样式显示原文；`$...$`、`$$...$$` 由 GFM 解析，LaTeX 的 `\(...\)` 与独占一行的 `\[...\]` 在解析前等长替换为 `$$` 定界符，保留公式内的反斜杠与下划线且不改变源码偏移，代码块、行内代码与 Markdown 转义的方括号不受影响；任何未识别的语法同样按原文兜底，内容不会凭空消失。引用式链接的定义可能出现在文末，只在终态快照整体解析一次。尚未开始的目标合并到最新全文；解析期间收到后续追加时，已完成的有效前缀快照仍会发布，避免高速输出持续挤掉显示更新。上游纠正全文时才丢弃不再适用的旧快照。输入器使用 state-based `TextFieldState` 在组件内持有编辑缓冲区，逐字编辑不会回写聊天页面状态，也不经过旧版 `CoreTextField` 管线。
+
+思考进行中以有界的尾部窗口展开，只露出最近四行并在顶部渐隐，结束后自动收起；用户手动展开或收起后不再自动切换，点击进行中的窗口会展开全文。思考与工作过程的展开态在组合期按生命周期同步推导，与正文条目插入落在同一帧；收起动画期间保持尾部窗口的高度上限，结束瞬间不会先闪现全文再收拢。工作过程不加卡片外壳：折叠时是一行摘要（如“思考 2 次 · 调用 8 个工具”），展开后是左侧带连线的时间线，每个节点用工具图标徽章标示状态。它在仍是本轮末尾时保持展开，正文开始或本轮结束后自动收起，同样尊重手动选择；成员未变化的已结束分组复用原条目以跳过重组。连续调用同一工具合并为一个节点（浏览器条目因带实时预览保持独立）。工具折叠时只显示标题和一行结论：终端取输出最后一行，失败显示原因，常态成功不占行；命令、完整结果和浏览器预览只在展开后组合。执行超过 3 秒的工具显示界面侧近似计时，不写入归档。思考内容直接显示每次已解析的增量，排版与可见文字同步更新，不经过正文的逐字显现队列，也不在结束时补播积压内容。前台思考结束后继续接收最终解析快照，再以同一份结果显示稳定 Markdown；从历史记录或后台恢复的已完成思考直接显示全文。
+
+Markdown 空行只参与块结构解析，不按源码数量累加可见高度；稳定与流式渲染共用同一套块级排版，按正文、标题、列表、引用、代码和表格之间的关系分配留白，首块不额外下移。块间距使用随系统字体缩放的排版单位，标题前进一步扩大、标题后适度收紧，思考语气整体按比例收紧，在大字体下仍保持清晰层级。Runtime 同时要求最终答复使用合法且克制的 GFM：普通交流优先短段落，仅在有助于分组、步骤或比较时使用标题、列表和表格，表格各行保持独立，避免把整句粗体当作标题。
+
+正文的逐字效果由单个回答级帧时钟驱动。段落、标题、代码块和表格单元格先完成一次真实排版，再由 `DrawModifierNode` 按字素边界裁剪 `TextLayoutResult`；帧间推进只使绘制失效，不重建 Markdown AST、`AnnotatedString` 或文本布局。显现速度以 36 字素/秒为基础，随积压量增长，不设固定速度上限；同一帧的推进量按源码顺序跨块分配，段落、代码块和表格单元格之间不会丢弃剩余推进量。行内语法闭合（加粗、行内代码、链接折叠）导致渲染文本变短时，显现进度保持单调前进，不回退重打已显示的文字。前缀路径按字素增量累计，只有显现跨入新行时才触发一次测量并增加文字高度。Emoji ZWJ、肤色修饰、组合音标、国旗和代理对均作为完整字素显示，不会从 UTF-16 中间断开。
+
+### 功耗与开销
+
+- 不轮询、不保活 Google 进程、不持续写日志
+- 无障碍保护默认关闭；开启后只响应设置、包、用户生命周期与 Runtime 明确上报，设置争抢采用退避，断连重绑有次数和冷却上限
+- 热路径只保留当前机型实际验证有效的 `OplusSpeechHandler` hook
+- 默认助理配置检查带 15 秒冷却，息屏后的 Hey Google 恢复路径不主动查写默认助理配置
+- 高频成功路径使用 `DEBUG`；Debug 构建可诊断，Release 由 R8 确定性裁剪
+- 电源键拦截路径不执行休眠、轮询或阻塞等待；本次触发只做快速启动尝试，失败即回退系统原逻辑
+- 默认助理修复异步执行并按用户串行，完成时重新核验 role、目标与开关状态
+- 息屏后的 Hey Google 恢复只响应系统息屏事件；最多串行尝试 3 次，失败才投递下一次，亮屏/成功/结束都会移除未执行 callback
+- Google App 的锁屏/亮屏语音输入优先 Hook 固定 FloatyActivity，不常驻拦截 Google App 所有页面；语音补偿只按同一 FloatyActivity 实例去重，避免重复补发又不影响快速关闭后再次启动
+
+### 预期行为
+
+电源键目标为 Gemini 时，长按恢复 Google 原有系统助手与 Activity 兜底链路。目标为 Eta 且 Eta 已是默认数字助理时，长按会打开 edge-to-edge 全屏助理浮窗并优先开始单次语音输入，可切换键盘；系统在唤醒时采集截图、前台应用和页面内容，Session 异步接收后由浮窗自动随提问发送，不再显示手动添加屏幕按钮，也不依赖无障碍截图。用户提交文本后，工具执行、流式结果和归档仍由主进程中的 Agent Runtime 负责，语音识别由统一会话控制器选择系统服务或千问、豆包云端接口。助手浮窗可自动播报语音提问的最终回答；开始录音、窗口隐藏或关闭时停止播放，不在后台补播。聊天听写先插入可编辑草稿，历史回答可手动朗读。配置、协议与生命周期边界见[语音配置与实现](VOICE.md)。
+
+Eta 尚未成为默认助理且自动设置关闭时，按既定策略直接回到小布，不创建平行 Activity 会话。自动设置开启时，失败触发只在后台修复当前选择，当前长按仍立即回退；后续触发使用修复后的主路径。HyperOS 后续只需把厂商按键事件接到同一目标分发边界，不需要修改文本会话和 Runtime。

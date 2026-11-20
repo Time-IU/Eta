@@ -1,7 +1,10 @@
 package io.github.mangi.eta.ui.components
 
 /** Offsets are UTF-16 offsets in the original body, never in rendered/visible list items. */
-internal data class ChatSearchDocument(val messageId: String, val body: String)
+internal data class ChatSearchDocument @JvmOverloads constructor(
+    val messageId: String, val body: String,
+    val turn: Int = 0, val fromUser: Boolean = false,
+)
 internal data class ChatSearchAnchor(val messageId: String, val start: Int)
 internal data class ChatSearchHit(val messageId: String, val start: Int, val end: Int) {
     val anchor: ChatSearchAnchor get() = ChatSearchAnchor(messageId, start)

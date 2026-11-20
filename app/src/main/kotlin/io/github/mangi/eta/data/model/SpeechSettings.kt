@@ -6,7 +6,7 @@ private const val MIMO_SPEECH_BASE_URL = "https://api.xiaomimimo.com/v1"
 private const val DEEPSEEK_SPEECH_BASE_URL = "https://api.deepseek.com"
 
 @Serializable
-enum class AsrProvider { QWEN_REALTIME, QWEN_FLASH, QWEN_FILE, DOUBAO, MIMO, SHERPA_NCNN, QWEN3_LOCAL, LOCAL, DEEPSEEK;
+enum class AsrProvider { QWEN_REALTIME, QWEN_FLASH, QWEN_FILE, DOUBAO, MIMO, SHERPA_NCNN, QWEN3_LOCAL, LOCAL, DEEPSEEK, SYSTEM;
 
     /** Keep legacy enum names/ordinals readable; only LOCAL is offered in new UI. */
     val canonical: AsrProvider get() = when (this) {
@@ -149,6 +149,12 @@ data class SpeechSettings(
     val deepseekAsr: DeepSeekAsrConfig = DeepSeekAsrConfig(),
     val deepseekTts: DeepSeekTtsConfig = DeepSeekTtsConfig(),
     val systemTts: SystemTtsConfig = SystemTtsConfig(),
+    /** 语速倍率，1.0 为正常。云端服务商暂不支持，只有手机自带语音会用到。 */
+    val speechRate: Float = 1.0f,
+    /** 音调倍率，1.0 为正常。同上，只有手机自带语音会用到。 */
+    val speechPitch: Float = 1.0f,
+    /** 熄屏后继续朗读，而不是被系统息屏打断。 */
+    val speakOnScreenOff: Boolean = true,
 ) {
     /** ASR-only migration; cloud configuration and all TTS fields remain unchanged. */
     fun canonicalized(): SpeechSettings = if (asr == asr.canonical) this else copy(asr = asr.canonical)
@@ -156,6 +162,8 @@ data class SpeechSettings(
     companion object {
         const val DEFAULT_AUTO_SEND_SILENCE_MS = 2_000
         val AUTO_SEND_SILENCE_OPTIONS = listOf(1_000, 1_500, 2_000, 3_000, 0)
+        /** 语速与音调取值；与系统语音引擎的实际可用范围对齐。 */
+        val SPEECH_TONE_OPTIONS = listOf(0.5f, 0.75f, 1.0f, 1.25f, 1.5f, 2.0f)
     }
 }
 

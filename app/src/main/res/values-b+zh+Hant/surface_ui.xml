@@ -1,0 +1,5 @@
+<resources>
+    <string name="surface_help_cpu" formatted="false">Eta 的 CPU 使用量。佔滿一個邏輯核心為 100%，多核心合計可超過 100%。</string>
+    <string name="surface_help_pss" formatted="false">Eta 使用的記憶體，已按比例分攤共用部分，較適合估算應用程式佔用。</string>
+    <string name="surface_help_rss" formatted="false">Eta 處理程序目前駐留在記憶體中的頁面。共用部分可能重複計算，不等於獨佔記憶體。</string>
+</resources>

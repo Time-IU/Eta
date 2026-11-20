@@ -20,6 +20,7 @@ internal data class LocalToolRequirement(
     val colorOs: Boolean = false,
     val gui: Boolean = false,
     val freshObservation: Boolean = false,
+    val vivoAlternative: Boolean = false,
 )
 
 /** 展示、模型目录与执行边界共同使用的本地工具能力合同。未登记的工具不能发布。 */
@@ -32,8 +33,8 @@ internal object AgentToolRequirements {
         }
         register(
             RootRequirement.NONE,
-            "get_current_context", "search_apps", "launch_app", "present_to_user", "open_uri", "browser_use", "web_search", "fetch_url",
-            "observe_screen", "release_gui", "tap", "tap_area", "tap_element", "long_press",
+            "get_current_context", "search_apps", "launch_app", "present_to_user", "open_uri", "ask_user", "browser_use", "web_search", "fetch_url",
+            "observe_screen", "release_gui", "tap", "tap_area", "tap_smart", "tap_element", "long_press",
             "long_press_element", "swipe", "scroll", "scroll_element", "type_text", "input_text",
             "replace_text", "clear_text", "set_clipboard", "get_clipboard", "paste_text",
             "wait", "wait_for_text", "wait_for_package", "open_system_panel",
@@ -41,8 +42,9 @@ internal object AgentToolRequirements {
             "search_notification_history", "recent_app_activity", "app_usage_summary",
             "get_current_location", "get_device_environment", "memory_get", "memory_write",
             "character_memory_get", "character_memory_write",
-            "skills_list", "skills_read", "skills_read_resource", "skills_list_curated",
+            "skills_list", "skills_read", "skills_read_resource", "skills_list_curated", "skills_manage",
             "skills_inspect_github", "skills_install_from_github",
+            "tasks_triggers", "tasks_list", "tasks_create", "tasks_update", "tasks_delete", "tasks_run", "tasks_cancel", "tasks_history",
         )
         register(
             RootRequirement.PARTIAL,
@@ -52,6 +54,7 @@ internal object AgentToolRequirements {
         )
         register(
             RootRequirement.REQUIRED,
+            "virtual_screen", "lingscreen_open_app",
             "top_memory_apps", "top_storage_apps", "wifi_credentials", "read_sms_code",
             "get_logcat", "set_setting", "set_device_state", "app_state_control",
             "list_alarms", "list_active_timers", "get_health_summary", "search_clipboard_history",
@@ -70,17 +73,17 @@ internal object AgentToolRequirements {
         }
         put("search_calendar_events", LocalToolRequirement(RootRequirement.PARTIAL, systemAccess = ToolSystemAccess.CALENDAR_READ))
         listOf(
-            "observe_screen", "tap", "tap_area", "tap_element", "long_press",
+            "observe_screen", "tap", "tap_area", "tap_smart", "tap_element", "long_press",
             "long_press_element", "swipe", "scroll", "scroll_element", "type_text", "input_text",
             "replace_text", "clear_text", "paste_text", "press_key", "open_system_panel",
             "wait_for_text", "wait_for_package",
         ).forEach { name -> put(name, getValue(name).copy(accessibility = true)) }
         listOf(
-            "observe_screen", "launch_app", "present_to_user", "open_uri", "open_system_panel",
+            "observe_screen", "launch_app", "lingscreen_open_app", "virtual_screen", "present_to_user", "open_uri", "open_system_panel",
             "wait", "wait_for_text", "wait_for_package", "set_clipboard", "get_clipboard",
         ).forEach { name -> put(name, getValue(name).copy(gui = true)) }
         listOf(
-            "tap", "tap_area", "tap_element", "long_press", "long_press_element", "swipe",
+            "tap", "tap_area", "tap_smart", "tap_element", "long_press", "long_press_element", "swipe",
             "scroll", "scroll_element", "type_text", "input_text", "replace_text", "clear_text",
             "paste_text", "press_key",
         ).forEach { name -> put(name, getValue(name).copy(gui = true, freshObservation = true)) }
@@ -96,6 +99,9 @@ internal object AgentToolRequirements {
             "search_notes", "search_coloros_recordings", "search_recording_summaries",
             "search_system_memories", "search_saved_places",
         ).forEach { name -> put(name, getValue(name).copy(colorOs = true)) }
+        io.github.mangi.eta.agent.context.VivoPersonalContextQuery.tools.forEach { name ->
+            put(name, getValue(name).copy(vivoAlternative = true))
+        }
         // 系统记忆优先使用 Hook 桥接，框架失联时仍有独立的 Root 快照来源。
         listOf("search_system_memories", "search_saved_places", "search_personal_orders").forEach { name ->
             put(name, getValue(name).copy(lsposedRequirement = LsposedRequirement.OPTIONAL))
@@ -117,8 +123,9 @@ internal object AgentToolRequirements {
 
     fun hasForegroundIntentFallback(name: String?): Boolean = name == "set_alarm" || name == "set_timer"
 
-    fun rootDenied(name: String, arguments: JSONObject, rootAvailable: Boolean): Boolean {
-        if (rootAvailable) return false
+    fun rootDenied(name: String, arguments: JSONObject, rootAvailable: Boolean,
+        hookCanvasAvailable: Boolean = false, virtualRoute: Boolean = false): Boolean {
+        if (rootAvailable || io.github.mangi.eta.agent.display.UnifiedCanvasTransportPolicy.bypassRootRequirement(name, hookCanvasAvailable, virtualRoute)) return false
         if (rootRequirement(name) == RootRequirement.REQUIRED) return true
         return when (name) {
             "press_key" -> arguments.optString("button").equals("PASTE", ignoreCase = true)
@@ -127,14 +134,15 @@ internal object AgentToolRequirements {
     }
 
     /** 复制后收窄，不能修改下一轮或另一个 run 共用的原始 Schema。 */
-    fun project(tools: JSONArray, rootAvailable: Boolean): JSONArray = JSONArray().also { result ->
+    fun project(tools: JSONArray, rootAvailable: Boolean, hookCanvasAvailable: Boolean = false, virtualRoute: Boolean = false): JSONArray = JSONArray().also { result ->
         for (index in 0 until tools.length()) {
             val original = tools.getJSONObject(index)
             val name = original.getJSONObject("function").getString("name")
             val requirement = rootRequirement(name)
-            if (!rootAvailable && requirement == RootRequirement.REQUIRED) continue
+            val canvasHook = io.github.mangi.eta.agent.display.UnifiedCanvasTransportPolicy.bypassRootRequirement(name, hookCanvasAvailable, virtualRoute)
+            if (!rootAvailable && !canvasHook && requirement == RootRequirement.REQUIRED) continue
             val tool = JSONObject(original.toString())
-            if (!rootAvailable) projectUnprivileged(tool.getJSONObject("function"))
+            if (!rootAvailable && !canvasHook) projectUnprivileged(tool.getJSONObject("function"))
             result.put(tool)
         }
     }

@@ -139,6 +139,16 @@ class ConversationPanePanelTest {
                     composedQuery = paneState.searchQuery
                     composedAttention = hasPermissionAttention
                     ConversationSidePaneScaffold(
+                        onMoveToCategory = {},
+                        onConversationPin = {},
+                        onBatchDelete = {},
+                        onOpenRootSettings = {},
+                        onOpenAccessibilitySettings = {},
+                        onOpenTasks = {},
+                        onCreateCategory = {},
+                        onRenameCategory = { _, _ -> },
+                        onMoveCategory = { _, _ -> },
+                        onDeleteCategoryConfirmed = {},
                         state = paneState,
                         visible = true,
                         backHandlerEnabled = true,
@@ -299,6 +309,16 @@ class ConversationPanePanelTest {
                     applyInterfaceScale = true,
                 ) {
                     ConversationSidePaneScaffold(
+                        onMoveToCategory = {},
+                        onConversationPin = {},
+                        onBatchDelete = {},
+                        onOpenRootSettings = {},
+                        onOpenAccessibilitySettings = {},
+                        onOpenTasks = {},
+                        onCreateCategory = {},
+                        onRenameCategory = { _, _ -> },
+                        onMoveCategory = { _, _ -> },
+                        onDeleteCategoryConfirmed = {},
                         state = ConversationPaneUiState(
                             conversations = conversations,
                             selectedConversationId = conversations.firstOrNull()?.id,

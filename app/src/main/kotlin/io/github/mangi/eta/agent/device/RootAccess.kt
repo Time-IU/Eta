@@ -41,6 +41,7 @@ internal object RootAccess {
     private var probeJob: Job? = null
     @Volatile
     private var lastAutoRetryAtElapsedMs: Long = 0L
+    private var probedThisProcess = false
 
     fun initialize(context: Context) {
         synchronized(this) {
@@ -106,12 +107,12 @@ internal object RootAccess {
                 val attempted = prefs.getBoolean(AUTOMATIC_REQUEST_ATTEMPTED, false)
                 val wasGranted = prefs.getBoolean(LAST_GRANTED, false)
                 val present = suExists()
-                // 若此前已授过权（wasGranted=true），即使 KernelSU 隐藏 su 文件或 PATH 不可见，也允许尝试执行 su。
-                if (!present && !explicit && !wasGranted) {
-                    mutableState.value = RootAccessState(RootAccessStatus.UNAVAILABLE)
-                    return@launch
-                }
-                if (!shouldRequestRoot(explicit, attempted, wasGranted)) {
+                // 以前 suExists() 只扫 PATH：App 进程的 PATH 里没有 KernelSU / Magisk 的
+                // /data/adb/*/bin，于是每次都直接判「未授权」，连一次 su 都没试过。
+                // 不拿文件存在性当门禁；首次或已有授权时真探测，保留明确拒绝后的免打扰规则。
+                val probeOnce = !probedThisProcess && (!attempted || wasGranted)
+                probedThisProcess = true
+                if (!shouldRequestRoot(explicit, attempted, wasGranted) && !probeOnce) {
                     mutableState.value = mutableState.value.copy(
                         status = if (mutableState.value.status == RootAccessStatus.UNKNOWN) {
                             RootAccessStatus.NOT_GRANTED
@@ -156,10 +157,22 @@ internal object RootAccess {
         }.also { probeJob = it }
     }
 
-    private fun suExists(): Boolean = System.getenv("PATH").orEmpty()
+    private fun suExists(): Boolean = SU_SEARCH_PATHS.any { path ->
+        File(path, "su").let { it.isFile && it.canExecute() }
+    } || System.getenv("PATH").orEmpty()
         .split(File.pathSeparatorChar)
         .filter(String::isNotBlank)
         .any { path -> File(path, "su").let { it.isFile && it.canExecute() } }
+
+    /** KernelSU / Magisk / APatch 的 su 都不在 App 进程的 PATH 里，按已知路径兜底。 */
+    private val SU_SEARCH_PATHS = listOf(
+        "/data/adb/ksu/bin",
+        "/data/adb/magisk",
+        "/data/adb/ap/bin",
+        "/system/bin",
+        "/system/xbin",
+        "/debug_ramdisk",
+    )
 }
 
 internal fun shouldRequestRoot(explicit: Boolean, attempted: Boolean, wasGranted: Boolean): Boolean =

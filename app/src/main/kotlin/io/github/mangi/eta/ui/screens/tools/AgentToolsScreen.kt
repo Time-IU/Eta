@@ -73,6 +73,7 @@ fun AgentToolsScreen(
     state: AgentToolsUiState,
     onAction: (AgentToolsAction) -> Unit,
     modifier: Modifier = Modifier,
+    managementHeader: @Composable () -> Unit = {},
 ) {
     val context = LocalContext.current
     remember(context.applicationContext) {
@@ -151,11 +152,12 @@ fun AgentToolsScreen(
     when (LocalUiStyle.current) {
         AppearanceUiStyle.COUI -> {
             CouiLazyScaffoldPage(
-                title = stringResource(R.string.ui_tool_ability_9f0f80),
+                title = stringResource(R.string.compact_tools_title),
                 onBack = { onAction(AgentToolsAction.NavigateBack) },
                 modifier = modifier,
                 listState = if (showAll) allListState else currentListState,
             ) {
+                item(key = "management-header") { managementHeader() }
                 item(key = "capability-view") {
                     CouiSegmentedTabs(
                         items = tabs,
@@ -227,11 +229,12 @@ fun AgentToolsScreen(
 
         AppearanceUiStyle.MIUIX -> {
             MiuixScaffoldPage(
-                title = stringResource(R.string.ui_tool_ability_9f0f80),
+                title = stringResource(R.string.compact_tools_title),
                 onBack = { onAction(AgentToolsAction.NavigateBack) },
                 modifier = modifier,
                 listState = if (showAll) allListState else currentListState,
             ) {
+                item(key = "management-header") { managementHeader() }
                 item(key = "capability-view") {
                     TabRow(
                         tabs = listOf(

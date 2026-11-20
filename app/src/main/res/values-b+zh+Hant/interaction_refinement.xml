@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="refine_update_rate_limit">GitHub 更新介面触發访問頻率限制（HTTP 403/429），不是應用没有联网，也不等于没有更新。請稍後重试，或打開個人分支發布頁檢視。無需提供访問令牌。</string>
+    <string name="refine_update_dns">無法解析 GitHub 更新介面地址。請檢查網路或 DNS，再重试；也可打開個人分支發布頁。</string>
+    <string name="refine_update_tls">與 GitHub 的安全連線未能建立。請檢查系统時間、網路代理或憑證环境。不会關閉憑證驗證來绕過錯誤。</string>
+    <string name="refine_update_timeout">連線 GitHub 更新介面超時，請檢查網路後重试。</string>
+    <string name="refine_update_http">GitHub 更新介面返回异常 HTTP 狀態。請稍後重试，或直接檢視個人分支發布頁。</string>
+    <string name="refine_update_response">更新介面返回的内容無法识別，未将其當作“没有更新”。請檢視個人分支發布頁。</string>
+    <string name="refine_update_network">無法連線 GitHub 更新介面。請檢查網路後重试，或檢視個人分支發布頁。</string>
+    <string name="refine_open_releases">打開發布頁</string>
+    <string name="refine_canvas_explanation">Hook 設定提交成功不代表新版 Hook 已實際加載。這里只顯示最近一次完成的同步结果。</string>
+    <string name="refine_canvas_read_failed">設定讀取失敗 · 保留上次值，暂不可修改</string>
+    <string name="refine_canvas_reading">正在讀取設定</string>
+    <string name="refine_canvas_action_failed">本次操作失敗 · 可重试</string>
+    <string name="refine_canvas_sync_failed">本地已儲存 · Hook 同步失敗</string>
+    <string name="refine_canvas_no_framework">當前框架不可用 · Root 方式仍按實際权限判断</string>
+    <string name="refine_canvas_confirmed">最近同步：已提交並读回</string>
+    <string name="refine_canvas_saving">正在儲存／同步…</string>
+    <string name="refine_usage_tokens">Token 用量</string>
+    <string name="refine_usage_session">對話統計</string>
+    <string name="refine_usage_reasoning">其中推理 %1$s</string>
+    <string name="refine_usage_subagents">子智能体（%1$d 次）</string>
+    <string name="refine_usage_turns_steps">%1$d 輪 %2$d 步</string>
+    <string name="refine_usage_more">更多明细與最近記錄</string>
+    <string name="refine_usage_less">收起更多明细</string>
+    <string name="refine_usage_explain">檢視指標說明</string>
+    <string name="refine_usage_not_additive">當前上下文、最近运行記錄和本對話累计是不同統計范围，不能直接相加。未知數據不以 0 代替。</string>
+    <string name="refine_help_context">目前模型請求的上下文估算，不是會話累計。上下文上限來自模型設定。</string>
+    <string name="refine_help_cache">快取讀取、快取寫入和未快取输入属于输入的不同部分。展示采用應用统一歸一化口径；快取命中率為快取讀取佔歸一化输入的比例。不同服務商返回字段可能不同，未提供的项目顯示未知。最近記錄可能是一次运行内多個請求的累计，不能视為單個網路請求原值。</string>
+    <string name="refine_help_output">輸出包含模型返回的生成 Token；推理 Token 通常是輸出的子集，不能再次加到輸出。總用量沿用既有統計；子智能体另行標识，不能未经口径核對重複相加。</string>
+    <string name="refine_help_ttft">平均等待首个 Token 的时间，不包含后续生成耗时。</string>
+    <string name="refine_help_tps">输出 Token ÷ 可用解码时间，不包含工具执行时间。</string>
+    <string name="refine_help_time">所选范围的累计用时；并发记录可能不同于实际墙钟时间。</string>
+    <string name="refine_help_subagent">子任务分项统计，避免与会话总量重复相加。</string>
+    <string name="refine_help_steps">轮次、执行步骤、模型请求数是不同计数。</string>
+    <string name="refine_help_compaction">压缩、归档及回本来自已有记录；缺失时不借用其它范围的值。</string>
+</resources>

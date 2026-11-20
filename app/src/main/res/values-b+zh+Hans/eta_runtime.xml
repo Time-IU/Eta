@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="eta_runtime_title">Eta 运行时</string>
+    <string name="eta_runtime_close">关闭</string>
+    <string name="eta_runtime_unavailable">不可用：系统未提供或拒绝读取</string>
+    <string name="eta_runtime_waiting">等待新的采样…</string>
+    <string name="eta_runtime_scope">仅 Eta 主进程及可见的同 UID 进程。只读，不请求 Root。</string>
+    <string name="eta_runtime_sources">来源：ActivityManager / Debug.MemoryInfo 与允许读取的 /proc status/stat。CPU 约每 1.5 秒；PSS 和进程发现至少间隔 6 秒。关闭或进入后台即停止采样。</string>
+    <string name="eta_runtime_memory">应用内存</string>
+    <string name="eta_runtime_pss">PSS：%1$s · 可用 %2$d/%3$d</string>
+    <string name="eta_runtime_rss">RSS：%1$s · 可用 %2$d/%3$d</string>
+    <string name="eta_runtime_rss_note">PSS 按共享比例分摊，可相加。RSS 可能重复计算共享页，合计不代表独占物理内存。仅汇总可用行。</string>
+    <string name="eta_runtime_memory_note">Android 可能缓存或限频 PSS；时间表示距请求时间，不保证系统数据同样新鲜。拒绝或全零 PSS 标为不可用，不伪装成零。不使用整机内存百分比。</string>
+    <string name="eta_runtime_cpu">CPU：%1$s · 已采样 %2$d/%3$d</string>
+    <string name="eta_runtime_cpu_note" formatted="false">单个逻辑核心 = 100%，多线程合计可超过 100%。用户态＋内核态 CPU tick 差值除以单调清醒时间；不是整机归一化。首次或进程重启后等待第二次采样。</string>
+    <string name="eta_runtime_power_gpu">Eta 功耗 / GPU：暂不支持</string>
+    <string name="eta_runtime_power_gpu_note">当前没有可靠的公开应用级功耗或 GPU 归因接口。不以电池总电流、整机 GPU 负载或零代替 Eta 数据。</string>
+    <string name="eta_runtime_processes">可见进程 · %1$d</string>
+    <string name="eta_runtime_visibility">不是任务数，也不保证进程完整可见。按 UID 校验，不凭名称归属；隔离 / 不同 UID、Root 与 Linux 辅助进程不计入。共享 UID 的应用无法再区分。进程可能在两次采样之间退出。</string>
+    <string name="eta_runtime_partial">部分进程数据或发现受限，当前可见小计可能不完整。</string>
+    <string name="eta_runtime_main">Eta 主进程</string>
+    <string name="eta_runtime_same_uid">同 UID 进程</string>
+    <string name="eta_runtime_process_metrics">PSS %1$s\nRSS %2$s\nCPU %3$s</string>
+    <string name="eta_runtime_memory_age">距 PSS 请求：%1$d 秒</string>
+    <string name="eta_runtime_empty">暂无可用指标</string>
+    <string name="eta_runtime_details">采样说明</string>
+    <string name="eta_runtime_label_pss">PSS</string>
+    <string name="eta_runtime_label_rss">RSS</string>
+    <string name="eta_runtime_label_cpu">CPU</string>
+    <string name="eta_runtime_cached">缓存</string>
+    <string name="eta_runtime_coverage">可用采样：%1$d/%2$d 个已观察进程</string>
+    <string name="eta_runtime_process_title">进程 · PID %1$d</string>
+    <string name="eta_runtime_expand_processes">进程 · %1$d · 展开</string>
+    <string name="eta_runtime_collapse_processes">进程 · %1$d · 收起</string>
+</resources>

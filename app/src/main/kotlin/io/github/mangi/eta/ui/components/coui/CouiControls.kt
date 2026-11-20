@@ -29,6 +29,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
+import androidx.compose.foundation.text.BasicText
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -60,6 +61,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.input.VisualTransformation
@@ -125,6 +127,8 @@ internal fun CouiButton(
     role: CouiButtonRole = CouiButtonRole.Secondary,
     minHeight: Dp = CouiDialogDefaults.buttonHeight,
     contentPadding: PaddingValues = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+    maxLines: Int = 1,
+    textStyle: TextStyle? = null,
 ) {
     val dark = CouiTheme.isDark
     val scheme = CouiTheme.colorSchemeFor(dark)
@@ -217,13 +221,29 @@ internal fun CouiButton(
             .padding(contentPadding),
         contentAlignment = Alignment.Center,
     ) {
-        Text(
-            text = text,
-            kind = CouiTextKind.ItemTitle,
-            color = textColor,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
+        if (textStyle == null) {
+            Text(
+                text = text,
+                kind = CouiTextKind.ItemTitle,
+                color = textColor,
+                maxLines = maxLines,
+                textAlign = TextAlign.Center,
+                overflow = TextOverflow.Ellipsis,
+            )
+        } else {
+            // Incoming pages occasionally override contrast/typography. Preserve
+            // the native COUI font metrics unless the caller explicitly changes
+            // them, and retain the disabled-state contrast from the native role.
+            BasicText(
+                text = text,
+                style = rememberCouiTextStyle(CouiTextKind.ItemTitle).merge(textStyle).copy(
+                    color = if (enabled && textStyle.color != Color.Unspecified) textStyle.color else textColor,
+                    textAlign = TextAlign.Center,
+                ),
+                maxLines = maxLines,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
     }
 }
 

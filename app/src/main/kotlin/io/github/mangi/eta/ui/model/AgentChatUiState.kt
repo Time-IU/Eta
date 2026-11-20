@@ -8,6 +8,69 @@ import io.github.mangi.eta.agent.roleplay.RoleplayMessageState
 import io.github.mangi.eta.data.model.ReasoningEffort
 import io.github.mangi.eta.ui.components.RoleplayChatUi
 
+/** 上次运行被中断、可以从中断处继续时的提示状态；瞬时状态，不落库。 */
+@Immutable
+internal data class ResumableRunUiState(
+    val runId: String,
+    val interruptedAt: Long,
+    /** 「上次停在哪 + 有没有动过手」；算不出来时为 null，横幅只显示原来的提示。 */
+    val summary: String? = null,
+)
+
+/**
+ * 给续跑横幅补一句实话：上次停在哪一步、有没有真的动过手机。
+ * 只从检查点的对话记录里读，不做推断——没有记录就返回 null，不硬编一句。
+ */
+internal fun resumableRunSummary(transcript: List<AgentModelClient.ConversationMessage>): String? {
+    if (transcript.isEmpty()) return null
+    val last = transcript.lastOrNull { it.content.isNotBlank() || it.toolCallsJson.isNotBlank() }
+    val stop = when {
+        last == null -> "上次停在中间某一步"
+        last.toolCallsJson.isNotBlank() -> "上次停在工具调用这一步"
+        last.role == "user" -> "上次停在你的提问之后、还没开始回答"
+        last.role == "assistant" -> "上次停在回复输出中途"
+        else -> "上次停在中间某一步"
+    }
+    return "$stop，" + describeTouch(transcript.joinToString("\n") { it.toolCallsJson }) + "。"
+}
+
+/** 工具名 → 说人话的动作分组；摘要里最多说三组，多了省略。 */
+private val RESUMABLE_TOOL_GROUPS = listOf(
+    "点屏幕" to listOf(
+        "tap", "tap_element", "tap_area", "long_press", "long_press_element", "swipe", "press_key",
+    ),
+    "输入或发送" to listOf("type_text", "set_clipboard"),
+    "读写文件" to listOf(
+        "read_file", "write_file", "edit_file", "stat_file", "list_directory", "glob_files", "grep_files",
+    ),
+    "跑命令" to listOf("terminal"),
+    "打开应用" to listOf("launch_app", "open_uri"),
+)
+
+/** 数某个工具在工具调用 JSON 里出现几次；按带引号的完整名字匹配，tap 不会算进 tap_area。 */
+private fun countToolCalls(text: String, tool: String): Int {
+    if (text.isBlank()) return 0
+    val token = "\"" + tool + "\""
+    var count = 0
+    var index = text.indexOf(token)
+    while (index >= 0) {
+        count++
+        index = text.indexOf(token, index + token.length)
+    }
+    return count
+}
+
+/** 「有没有动过手」尽量说具体：分得出动作就点名，分不出就直说没认出来，不编。 */
+private fun describeTouch(toolText: String): String {
+    if (toolText.isBlank()) return "还没动过手机"
+    val groups = RESUMABLE_TOOL_GROUPS
+        .map { (label, tools) -> label to tools.sumOf { countToolCalls(toolText, it) } }
+        .filter { it.second > 0 }
+    if (groups.isEmpty()) return "已经动过手机（动作没认出来）"
+    val head = groups.take(3).joinToString("、") { "${it.first} ${it.second} 次" }
+    return "已经动过手机（" + head + (if (groups.size > 3) " 等" else "") + "）"
+}
+
 @Immutable
 internal data class AgentChatUiState(
     val messages: List<AgentChatMessageUi>,
@@ -40,6 +103,20 @@ internal data class AgentChatUiState(
     val hasEarlierMessages: Boolean = false,
     val conversationCharacterName: String? = null,
     val conversationCharacterAvatarPath: String? = null,
+    val lastModelUsage: TokenUsageUi? = null,
+    /** 会话最近一次发送使用的本地 Model.id；null 表示尚未绑定，跟随默认模型。 */
+    /** 会话搜索命中定位：打开会话后滚动到命中消息并临时高亮；瞬时状态，不落库。 */
+    val searchJump: SearchJumpUiState? = null,
+    /** 上次对话回合被中断、可以接着跑时的提示；瞬时状态，不落库。 */
+    val resumableRun: ResumableRunUiState? = null,
+    /** 斜杠命令的确认卡：未知命令、或带副作用的命令执行前问一句；瞬时状态，不落库。 */
+    val commandConfirm: CommandConfirmUi? = null,
+    /** 斜杠命令的结果卡：多行信息、停留到用户关掉；瞬时状态，不落库。 */
+    val commandResult: CommandResultUi? = null,
+    /** 输入框文本由本地持有，命令消费后靠这个递增令牌让它自己清空。 */
+    val inputResetToken: Long = 0,
+    /** @ 引用：本次要带进上下文的历史消息（最多 3 条）；发送后清空。 */
+    val pendingMessageRefs: List<MessageReferenceUi> = emptyList(),
 ) {
     val canCompactContext: Boolean get() = !isStreaming && messageEdit == null && history.any {
         !it.contextSummary && (it.role == "assistant" || it.role == "tool")
@@ -57,6 +134,8 @@ data class UserMessageUi(
     val content: String,
     val images: List<String> = emptyList(),
     val isEdited: Boolean = false,
+    /** 消息时间（毫秒）；0 表示旧数据没有时间，界面不显示时间戳。 */
+    val createdAt: Long = 0L,
 ) : AgentChatMessageUi
 
 @Immutable
@@ -71,6 +150,8 @@ data class AgentMessageUi(
     val selectedCandidate: Int = 0,
     /** 仅当前内存会话展示，不进入消息存储、归档与导出。 */
     val searchSuggestionsHtml: List<String> = emptyList(),
+    /** 消息时间（毫秒）；0 表示旧数据没有时间，界面不显示时间戳。 */
+    val createdAt: Long = 0L,
 ) : AgentChatMessageUi
 
 enum class SystemNoticeCode(val wireValue: String) {
@@ -79,7 +160,10 @@ enum class SystemNoticeCode(val wireValue: String) {
     RuntimeFailed("runtime_failed"),
     ModelRetry("model_retry"),
     ContextCompaction("context_compaction"),
-    Interrupted("interrupted");
+    Interrupted("interrupted"),
+
+    /** 本地命令/技能调用留下的短提示（不参与模型上下文）。 */
+    CommandNote("command_note");
 
     companion object {
         fun fromWireValue(value: String): SystemNoticeCode? = entries.firstOrNull {
@@ -103,6 +187,7 @@ data class SystemNoticeMessageUi(
 ) : AgentChatMessageUi
 
 @Immutable
+@kotlinx.serialization.Serializable
 data class TokenUsageUi(
     val contextTokens: Int? = null,
     val inputTokens: Int? = null,
@@ -118,7 +203,76 @@ data class TokenUsageUi(
     val ttftSteps: Int? = null,
     val decodeMs: Long? = null,
     val decodeTokens: Int? = null,
+    val requestDurationMs: Long? = null,
+    /** 上下文构成估算（系统提示词 / 工具定义 / 对话消息），只在运行期有意义。 */
+    val systemPromptTokens: Int? = null,
+    val toolDefinitionTokens: Int? = null,
+    val conversationTokens: Int? = null,
+    /** 首 token 延迟（run 平均，毫秒）。 */
+    val firstTokenMs: Long? = null,
+    /** run 累计的工具执行耗时（毫秒）。 */
+    val toolDurationMs: Long? = null,
+    /** run 内已计入用量的请求数。 */
+    val requestCount: Int? = null,
 ) {
+    /** Request average includes time to the first token, but excludes tools and earlier retries. */
+    val averageTokensPerSecond: Double?
+        get() = outputTokens?.takeIf { it >= 0 }?.let { tokens ->
+            requestDurationMs?.takeIf { it > 0 }?.let { tokens * 1000.0 / it }
+        }
+
+    /**
+     * 未缓存输入：OpenAI 口径的 prompt_tokens 含缓存命中，Anthropic 口径的 input_tokens
+     * 只算未缓存部分。用「输入是否大于等于缓存」区分两者，两种口径都成立。
+     */
+    val uncachedInputTokens: Int?
+        get() = inputTokens?.let { input ->
+            val cached = cachedTokens?.coerceAtLeast(0) ?: 0
+            if (input >= cached) input - cached else input
+        }
+
+    /** 缓存读取：供应商报的缓存命中 token。 */
+    val cacheReadTokens: Int?
+        get() = cachedTokens?.takeIf { it > 0 }
+
+    /** 缓存命中率 = 缓存读取 /（未缓存输入 + 缓存读取）。 */
+    val cacheHitRate: Float?
+        get() {
+            val cached = cacheReadTokens ?: return null
+            val uncached = uncachedInputTokens ?: 0
+            val total = cached + uncached
+            return if (total <= 0) null else cached.toFloat() / total
+        }
+
+    /**
+     * 生成阶段速度（TPS）：输出 token ÷（本次 run 累计耗时 − 累计首 token 延迟）。
+     *
+     * 与 [averageTokensPerSecond] 的区别：那个把首 token 等待也算进分母，是「整请求平均」；
+     * 这个只算真正在吐 token 的那段。输入框的 `x tok/s` 与面板的「输出速度（TPS）」都用它。
+     */
+    val generationTokensPerSecond: Double?
+        get() {
+            val tokens = outputTokens?.takeIf { it > 0 } ?: return null
+            val total = requestDurationMs?.takeIf { it > 0 } ?: return null
+            val ttft = (firstTokenMs ?: 0L).coerceIn(0L, (total - 1).coerceAtLeast(0))
+            return tokens * 1000.0 / (total - ttft).coerceAtLeast(1)
+        }
+
+    /** 首 token 平均延迟：本次 run 累计 TTFT ÷ 请求数。 */
+    val firstTokenAverageMs: Long?
+        get() {
+            val total = firstTokenMs?.takeIf { it > 0 } ?: return null
+            val count = requestCount?.takeIf { it > 0 } ?: 1
+            return total / count
+        }
+
+    /** 面板总量：未缓存输入 + 缓存读取 + 输出。 */
+    val totalBilledTokens: Int?
+        get() {
+            val parts = listOfNotNull(uncachedInputTokens, cacheReadTokens, outputTokens)
+            return if (parts.isEmpty()) null else parts.sum()
+        }
+
     val isEmpty: Boolean
         get() = contextTokens == null &&
             inputTokens == null &&
@@ -132,7 +286,9 @@ data class TokenUsageUi(
             ttftMs == null &&
             ttftSteps == null &&
             decodeMs == null &&
-            decodeTokens == null
+            decodeTokens == null &&
+            requestDurationMs == null && systemPromptTokens == null && toolDefinitionTokens == null &&
+            conversationTokens == null && firstTokenMs == null && toolDurationMs == null && requestCount == null
 
     val hasPerformanceStats: Boolean
         get() = (llmMs != null && llmMs > 0L) ||
@@ -232,9 +388,75 @@ data class MessageEditUiState(
     val previousFileReferences: List<PendingFileReferenceUi>,
     val hasLaterTurns: Boolean,
     val preserveFollowingMessages: Boolean = false,
+    val previousMessageRefs: List<MessageReferenceUi> = emptyList(),
 )
 
 /** 角色对话在界面上的身份投影；普通对话返回 null。 */
 internal fun AgentChatHomeUiState.roleplayChatUi(): RoleplayChatUi? = roleplay?.let {
     RoleplayChatUi(characterName = it.characterName, avatarPath = it.avatarPath, userName = it.userName)
+}
+
+/**
+ * 命令确认卡。
+ *
+ * @property commandName 需要二次确认的命令名；null 表示「这不是命令，要不要按原文发送」。
+ * @property payload 确认后要执行的原文（命令原文或待发送文本）。
+ */
+@Immutable
+internal data class CommandConfirmUi(
+    val title: String,
+    val detail: String,
+    val commandName: String?,
+    val payload: String,
+)
+
+/**
+ * 命令结果卡：替代「2 秒就消失」的 toast。
+ *
+ * @property lines 逐行展示的正文（清单、状态、用法），不做 Markdown 渲染。
+ * @property isError 出错时标题用错误色，正文仍按行给全。
+ */
+@Immutable
+internal data class CommandResultUi(
+    val title: String,
+    val lines: List<String> = emptyList(),
+    val isError: Boolean = false,
+)
+
+/** 命令面板内容：要么来自输入前缀过滤，要么由某条命令主动打开（/help、/skills、/model）。 */
+@Immutable
+internal data class CommandPaletteUi(
+    val title: String,
+    val entries: List<AgentPaletteEntry>,
+)
+
+internal enum class AgentPaletteBadge {
+    Skill,
+    SkillDisabled,
+}
+
+/**
+ * 面板里的一行：命令、技能、模型统一成同一种可点选条目。
+ *
+ * @property section 分组标题；与上一行相同则不重复渲染。
+ * @property current 选中态（当前模型）。
+ */
+@Immutable
+internal data class AgentPaletteEntry(
+    val key: String,
+    val title: String,
+    val subtitle: String,
+    val payload: AgentPalettePayload,
+    val badge: AgentPaletteBadge? = null,
+    val section: String? = null,
+    val current: Boolean = false,
+)
+
+@Immutable
+internal sealed interface AgentPalettePayload {
+    /** 命令或技能：按命令规则执行、或补全命令名等用户补参数。 */
+    data class Run(val command: AgentCommand) : AgentPalettePayload
+
+    /** 模型：点一下直接切换。 */
+    data class SwitchModel(val modelId: String) : AgentPalettePayload
 }

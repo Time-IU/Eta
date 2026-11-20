@@ -1,5 +1,6 @@
 package io.github.mangi.eta.agent.runtime
 
+import io.github.mangi.eta.agent.overlay.AgentOverlayRunningSession
 import java.util.concurrent.Executors
 import java.util.concurrent.RejectedExecutionException
 import android.annotation.SuppressLint
@@ -25,6 +26,7 @@ import android.os.Process
 import android.provider.Settings
 import android.view.Gravity
 import android.view.WindowManager
+import androidx.compose.ui.platform.ComposeView
 import android.view.View
 import android.window.OnBackInvokedDispatcher
 import android.window.OnBackInvokedCallback
@@ -33,7 +35,6 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.ui.platform.ComposeView
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.LifecycleRegistry
@@ -46,6 +47,9 @@ import com.itos.coui.effect.LocalCouiContourGlowEnabled
 import io.github.mangi.eta.EtaApp
 import io.github.mangi.eta.agent.accessibility.AgentAccessibilityService
 import io.github.mangi.eta.agent.device.RootAccess
+import io.github.mangi.eta.agent.display.VirtualScreenRoutingPolicy
+import io.github.mangi.eta.agent.display.VirtualScreenSession
+import io.github.mangi.eta.agent.display.VirtualScreenNotification
 import io.github.mangi.eta.agent.media.AgentImageCodec
 import io.github.mangi.eta.agent.model.AgentModelClient
 import io.github.mangi.eta.agent.overlay.AgentHapticFeedback
@@ -68,6 +72,7 @@ import io.github.mangi.eta.data.model.AppearanceSettings
 import io.github.mangi.eta.data.repository.AppearanceSettingsRepository
 import io.github.mangi.eta.data.repository.RuntimeConfigRepository
 import io.github.mangi.eta.ui.app.AgentAppTheme
+import io.github.mangi.eta.data.datastore.SettingsDataStore
 import kotlin.concurrent.thread
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -99,15 +104,18 @@ internal class AgentRuntimeService : Service(), LifecycleOwner, SavedStateRegist
     private val mainHandler = Handler(Looper.getMainLooper())
     private val resultIo = Executors.newSingleThreadExecutor { runnable -> Thread(runnable, "agent-result-io") }
     private val serviceMessenger = Messenger(IncomingHandler())
+    private lateinit var islandBridge: AgentRuntimeIslandBridge
 
     private val runs = RuntimeRunRegistry()
     private val guiControl = GuiControlCoordinator()
+    private val memoryWorkGate = AgentMemoryWorkGate()
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     @Volatile private var destroyed = false
     @Volatile private var lastGuiOwnerRunId: String? = null
     private var displayedRun: RuntimeRunRegistry.Run? = null
     private var screenWakeLock: PowerManager.WakeLock? = null
     private var localPrefsListener: SharedPreferences.OnSharedPreferenceChangeListener? = null
+
 
     private var windowManager: WindowManager? = null
     private var glowView: ComposeView? = null
@@ -153,6 +161,17 @@ internal class AgentRuntimeService : Service(), LifecycleOwner, SavedStateRegist
     override fun onCreate() {
         super.onCreate()
         activeInstance = this
+        islandBridge = AgentRuntimeIslandBridge(this, AndroidAgentLogger, ::cancelRun)
+        // Independent of model/tool event traffic: even a short idle delta must be durable.
+        serviceScope.launch(Dispatchers.IO) {
+            while (!destroyed) {
+                if (AgentMemoryGate.tier() >= AgentMemoryGate.TIER_FREEZE) {
+                    val result = AgentRunCheckpointRecorder.flushActive()
+                    if (result.failed > 0) AndroidAgentLogger.warn("Memory freeze checkpoint flush failed: count=${result.failed}")
+                }
+                kotlinx.coroutines.delay(AgentMemoryWorkGate.POLL_MS)
+            }
+        }
         savedStateRegistryController.performRestore(null)
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_CREATE)
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_START)
@@ -181,14 +200,38 @@ internal class AgentRuntimeService : Service(), LifecycleOwner, SavedStateRegist
         }
     }
 
+    /**
+     * 同意守门只对测试包生效。
+     *
+     * 正式包没有测试协议这回事，若这里不加 BETA_BUILD 判断，
+     * 正式用户的服务会因为「从未同意过测试协议」而被拒，表现为「Agent Runtime 服务绑定失败」。
+     */
+    private fun consentAllowsRuntime(): Boolean =
+        !io.github.mangi.eta.BuildConfig.BETA_BUILD ||
+            io.github.mangi.eta.data.repository.TestConsentRepository.isAccepted()
+
     override fun onBind(intent: Intent): IBinder? {
+        // 未同意就直接拒绝绑定：外部 App 拿不到 Messenger，绕过界面也起不来。
+        if (!consentAllowsRuntime()) {
+            AndroidAgentLogger.info("[consent] 未同意测试协议，拒绝绑定运行时服务")
+            return null
+        }
         if (intent.action != AgentRuntimeWire.ACTION_BIND) return null
         return serviceMessenger.binder
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (intent?.action != ACTION_KEEP_ALIVE || runs.all().isEmpty()) {
-            stopSelf(startId)
+        if (!consentAllowsRuntime()) { stopSelf(); return START_NOT_STICKY }
+        when (intent?.action) {
+            ACTION_PAUSE_RUNS -> pauseRuns(null, true)
+            ACTION_RESUME_RUNS -> pauseRuns(null, false)
+            ACTION_STOP_RUNS -> controlRuns(null).forEach { cancelRun(it.runId) }
+            ACTION_PAUSE_RUN -> intent.getStringExtra(EXTRA_RUN_ID)?.takeIf(String::isNotBlank)?.let { pauseRuns(it, true) }
+            ACTION_RESUME_RUN -> intent.getStringExtra(EXTRA_RUN_ID)?.takeIf(String::isNotBlank)?.let { pauseRuns(it, false) }
+            ACTION_STOP_RUN -> cancelRun(intent.getStringExtra(EXTRA_RUN_ID).orEmpty())
+            ACTION_REFRESH_FLUID -> RunProgressNotifier.refreshIdle(this, fluidPinned())
+            ACTION_SUPPLEMENT_RUN -> supplementConversation(intent.getStringExtra(EXTRA_SUPPLEMENT_TEXT).orEmpty(), intent.getStringExtra(EXTRA_SUPPLEMENT_CONVERSATION_ID).orEmpty())
+            else -> if (intent?.action != ACTION_KEEP_ALIVE && runs.all().isEmpty()) stopSelf(startId)
         }
         return START_NOT_STICKY
     }
@@ -204,6 +247,10 @@ internal class AgentRuntimeService : Service(), LifecycleOwner, SavedStateRegist
 
     override fun onDestroy() {
         destroyed = true
+        queuedRunIds.clear()
+        queuedAt.clear()
+        islandBridge.close()
+        RunProgressNotifier.stop(this, pinned = fluidPinned())
         if (activeInstance === this) activeInstance = null
         localPrefsListener?.let { listener ->
             Prefs.localAgentPreferences()?.unregisterOnSharedPreferenceChangeListener(listener)
@@ -276,13 +323,18 @@ internal class AgentRuntimeService : Service(), LifecycleOwner, SavedStateRegist
                     if (runId.isNotBlank()) cancelRun(runId)
                 }
 
+                AgentRuntimeWire.MSG_PAUSE -> pauseRuns(msg.data?.let(AgentRuntimeWire::runIdFromBundle), true)
+                AgentRuntimeWire.MSG_RESUME -> pauseRuns(msg.data?.let(AgentRuntimeWire::runIdFromBundle), false)
                 AgentRuntimeWire.MSG_STEER -> {
                     steerRun(msg.data, msg.replyTo)
                 }
 
                 AgentRuntimeWire.MSG_ACK_RESULT -> {
                     val runId = AgentRuntimeWire.runIdFromBundle(msg.data ?: return)
-                    dispatchResultIo { AgentRuntimeResultStore.remove(this@AgentRuntimeService, runId) }
+                    dispatchResultIo {
+                        AgentRuntimeResultStore.remove(this@AgentRuntimeService, runId)
+                        AgentRunCheckpointStore.forgetSeed(runId)
+                    }
                 }
 
                 AgentRuntimeWire.MSG_READ_CONTEXT_RESULT -> {
@@ -329,6 +381,8 @@ internal class AgentRuntimeService : Service(), LifecycleOwner, SavedStateRegist
             val prepared = runCatching {
                 run.session.controller.throwIfCancelled()
                 run.awaitPredecessors()
+                // Before decoding/copying images and resolving model configurations.
+                memoryWorkGate.await(run.session.controller)
                 val request = AgentRuntimeRequestConfigResolver.constrainPresentation(
                     AgentRuntimeImageTransfer.materialize(incoming), isEtaProcess,
                 )
@@ -384,6 +438,57 @@ internal class AgentRuntimeService : Service(), LifecycleOwner, SavedStateRegist
         }
     }
 
+    private val reviewGenerations = java.util.concurrent.ConcurrentHashMap<String, Long>()
+    private val queuedRunIds = linkedSetOf<String>()
+    private val memoryQueueDrain = object : Runnable {
+        override fun run() {
+            if (destroyed) return
+            val pending = queuedRunIds.toList()
+            pending.forEach { id ->
+                queuedRunIds.remove(id)
+                runs.get(id)?.let(::executePreparedRun)
+            }
+            if (queuedRunIds.isNotEmpty()) mainHandler.postDelayed(this, MEMORY_QUEUE_INTERVAL_MS)
+        }
+    }
+    private val queuedAt = mutableMapOf<String, Long>()
+
+    private fun fluidPinned(): Boolean = runCatching {
+        runBlocking { SettingsDataStore.settings() }.overlayFluidPinned
+    }.getOrDefault(false)
+
+    private fun runningSessionCount(): Int = runs.snapshots().size
+
+    private fun controlRuns(runId: String?): List<RuntimeRunRegistry.Run> =
+        if (runId.isNullOrBlank()) runs.all().filterNot { it.session.isTerminal }
+        else listOfNotNull(runs.get(runId)).filterNot { it.session.isTerminal }
+
+    private fun pauseRuns(runId: String?, paused: Boolean) {
+        controlRuns(runId).forEach { run ->
+            if (paused) {
+                if (!guiControl.pauseForUser(run.runId)) run.session.controller.pause()
+            } else {
+                if (guiControl.state.value.ownerRunId == run.runId) guiControl.resumeForUser()
+                run.session.controller.resume()
+            }
+            RunControl.setPaused(run.runId, paused, "runtime.control")
+        }
+        RunProgressNotifier.refresh()
+        publishExecutionState()
+    }
+
+    private fun supplementConversation(text: String, conversationId: String) {
+        val trimmed = text.trim()
+        if (trimmed.isBlank()) return
+        val candidates = runs.all().filterNot { it.session.isTerminal }
+        val target = if (conversationId.isBlank()) candidates.singleOrNull()
+            else candidates.singleOrNull { run ->
+                run.request.handoff?.takeIf { it.source == AgentRuntimeWire.AGENT_UI_HANDOFF_SOURCE }
+                    ?.let { AgentUiHandoffPayload.from(it.payload).conversationId } == conversationId
+            }
+        target?.supplement(trimmed)
+    }
+
     private fun startRun(
         request: AgentRuntimeWire.RunRequest,
         replyTo: Messenger? = null,
@@ -404,15 +509,25 @@ internal class AgentRuntimeService : Service(), LifecycleOwner, SavedStateRegist
             sendResultTo(replyTo, AgentRuntimeWire.RunResult(request.runId, false, "", "Agent Runtime 服务已停止"))
             return null
         }
+        val automated = io.github.mangi.eta.agent.automation.AgentTaskScheduler.isRegistered(request.runId)
         val admission = runs.admit(request) {
             lateinit var session: AgentRuntimeSession
             session = AgentRuntimeSession(
                 runId = request.runId,
                 operation = request.operation,
+                conversationKey = request.effectiveModelSessionId,
                 eventSink = { event -> sendEventTo(replyTo, event) },
                 resultSink = { result -> sendResultTo(replyTo, result) },
                 beforeTerminalPublish = {
                     runs.finish(request.runId, session)?.releaseIncoming()
+                    reviewGenerations.remove(request.runId)
+                    mainHandler.post {
+                        queuedRunIds.remove(request.runId)
+                        queuedAt.remove(request.runId)
+                        RunControl.clearRun(request.runId, "runtime.finished")
+                        RunProgressNotifier.removeRun(request.runId, pinned = fluidPinned())
+                        RunProgressNotifier.noteConcurrency(runningSessionCount())
+                    }
                     AgentExecutionService.release("run:${request.runId}")
                     mainHandler.post {
                         if (!destroyed) {
@@ -456,7 +571,7 @@ internal class AgentRuntimeService : Service(), LifecycleOwner, SavedStateRegist
             }
         }
         // Root 入口保留原有绑定服务生命周期；新增 FGS 不能成为厂商后台入口的新前置权限。
-        val allowBoundFallback = RootAccess.isGranted
+        val allowBoundFallback = RootAccess.isGranted || automated
         val executionHeld = AgentExecutionService.acquire(
             this, "run:${request.runId}", allowBoundFallback = allowBoundFallback,
         ) { mainHandler.post { cancelRun(request.runId) } }
@@ -465,6 +580,14 @@ internal class AgentRuntimeService : Service(), LifecycleOwner, SavedStateRegist
             return null
         }
         admission.replacedRuns.forEach { cancelRun(it.runId) }
+        reviewGenerations[request.runId] = AgentExperienceReview.foregroundStarted()
+        val ui = request.handoff?.takeIf { it.source == AgentRuntimeWire.AGENT_UI_HANDOFF_SOURCE }
+            ?.let { AgentUiHandoffPayload.from(it.payload) }
+        RunControl.bindRun(request.runId, ui?.conversationId.orEmpty())
+        RunProgressNotifier.start(this)
+        RunProgressNotifier.noteConversation(request.runId, ui?.conversationId.orEmpty(), ui?.title.orEmpty())
+        RunProgressNotifier.noteConcurrency(runningSessionCount())
+        islandBridge.start(request)
         runCatching {
             startService(Intent(this, AgentRuntimeService::class.java).setAction(ACTION_KEEP_ALIVE))
         }.onFailure { throwable ->
@@ -495,10 +618,40 @@ internal class AgentRuntimeService : Service(), LifecycleOwner, SavedStateRegist
 
     private fun executePreparedRun(run: RuntimeRunRegistry.Run) {
         if (!runs.contains(run)) return
+        if (run.session.controller.isCancelled) {
+            failBeforeExecution(run, "已停止")
+            return
+        }
+        val tier = AgentMemoryGate.tier(this)
+        val limit = AgentMemoryGate.sessionLimit().coerceIn(1, MAX_CONCURRENT_RUNS)
+        val others = runs.all().count {
+            it !== run && !it.preparing && it.runId !in queuedRunIds && !it.session.isTerminal
+        }
+        if (tier >= AgentMemoryGate.TIER_QUEUE || others >= limit) {
+            // A memory freeze is resumable, not an inactivity timeout/terminal failure.
+            if (tier >= AgentMemoryGate.TIER_QUEUE) queuedAt[run.runId] = System.currentTimeMillis()
+            val started = queuedAt.getOrPut(run.runId) { System.currentTimeMillis() }
+            if (tier < AgentMemoryGate.TIER_QUEUE && System.currentTimeMillis() - started >= MEMORY_QUEUE_TTL_MS) {
+                queuedRunIds.remove(run.runId)
+                queuedAt.remove(run.runId)
+                failBeforeExecution(run, "内存紧张，这条会话排队超时，请稍后重试")
+                return
+            }
+            queuedRunIds += run.runId
+            mainHandler.removeCallbacks(memoryQueueDrain)
+            mainHandler.postDelayed(memoryQueueDrain, MEMORY_QUEUE_INTERVAL_MS)
+            return
+        }
+        queuedRunIds.remove(run.runId)
+        queuedAt.remove(run.runId)
+        RunProgressNotifier.noteSessionLimit(limit, MAX_CONCURRENT_RUNS)
         val screenOnBinding = run.session.controller.register { mainHandler.post(::updateKeepScreenOn) }
         thread(name = "agent-runtime") {
             try {
+                memoryWorkGate.await(run.session.controller)
                 executeRun(run)
+            } catch (_: AgentRunCancelledException) {
+                failBeforeExecution(run, "已停止")
             } finally {
                 screenOnBinding.close()
             }
@@ -509,6 +662,7 @@ internal class AgentRuntimeService : Service(), LifecycleOwner, SavedStateRegist
         val outcome = AgentRuntimeRunExecutor(
             context = this,
             guiControl = guiControl,
+            reviewGeneration = reviewGenerations.remove(run.runId),
             currentPermissions = ::currentRuntimePermissions,
             snapshotRequest = run::snapshotRequest,
             onAcceptedEvent = { event, _ ->
@@ -535,6 +689,8 @@ internal class AgentRuntimeService : Service(), LifecycleOwner, SavedStateRegist
         run: RuntimeRunRegistry.Run,
         event: AgentEvent,
     ) {
+        RunProgressNotifier.note(run.runId, event)
+        islandBridge.update(run.runId, event, virtualDisplayState.value.active)
         if (event is AgentEvent.GuiControlChanged) {
             run.guiStatus = event.status
             if (event.status == GuiControlStatus.Acquired) lastGuiOwnerRunId = run.runId
@@ -588,6 +744,14 @@ internal class AgentRuntimeService : Service(), LifecycleOwner, SavedStateRegist
     ) {
         mainHandler.post {
             if (destroyed) return@post
+            islandBridge.finish(result)
+            val ui = run.request.handoff?.takeIf { it.source == AgentRuntimeWire.AGENT_UI_HANDOFF_SOURCE }
+                ?.let { AgentUiHandoffPayload.from(it.payload) }
+            TaskCompletionNotifier.show(
+                context = this, ok = result.ok, detail = if (result.ok) "任务已完成，请打开会话查看结果" else "任务未完成，请打开会话查看详情",
+                stopped = !result.ok && result.error == "已停止",
+                conversationId = ui?.conversationId.orEmpty(), conversationTitle = ui?.title.orEmpty(), runId = run.runId,
+            )
             run.completedContext = completedContext
             val guiState = guiControl.state.value
             if (lastGuiOwnerRunId != run.runId || guiState.userPaused ||
@@ -627,10 +791,11 @@ internal class AgentRuntimeService : Service(), LifecycleOwner, SavedStateRegist
     private fun sendEventTo(
         target: Messenger?,
         event: AgentEvent,
+        virtualScreen: Boolean? = null,
     ) {
         runCatching {
             val msg = Message.obtain(null, AgentRuntimeWire.MSG_EVENT)
-            msg.data = AgentRuntimeWire.eventToBundle(event)
+            msg.data = AgentRuntimeWire.eventToBundle(event, virtualScreen)
             target?.send(msg)
         }.onFailure { throwable ->
             AndroidAgentLogger.warnThrottled("runtime_event_delivery_failed") {
@@ -724,7 +889,7 @@ internal class AgentRuntimeService : Service(), LifecycleOwner, SavedStateRegist
             val snapshots = runs.snapshots()
             val runId = snapshots.firstOrNull { it.runId == guiControl.state.value.ownerRunId }?.runId
                 ?: snapshots.firstOrNull()?.runId.orEmpty()
-            msg.data = AgentRuntimeWire.ackBundle(runId)
+            msg.data = AgentRuntimeWire.activeRunBundle(listOf(runId).filter(String::isNotBlank) + snapshots.map { it.runId }.filter { it != runId })
             replyTo?.send(msg)
         }.onFailure { throwable ->
             AndroidAgentLogger.warnThrottled("runtime_active_run_delivery_failed") {
@@ -839,6 +1004,12 @@ internal class AgentRuntimeService : Service(), LifecycleOwner, SavedStateRegist
     private fun cancelRun(runId: String) {
         if (runId.isBlank()) return
         val run = runs.get(runId) ?: return
+        if (queuedRunIds.remove(runId)) {
+            queuedAt.remove(runId)
+            run.session.controller.cancel()
+            failBeforeExecution(run, "已停止")
+            return
+        }
         if (run.preparing) {
             run.session.controller.cancel()
             failBeforeExecution(run, "已停止")
@@ -1613,6 +1784,27 @@ internal class AgentRuntimeService : Service(), LifecycleOwner, SavedStateRegist
         private const val CAPSULE_CLEARANCE_SLOP_DP = 8
         private const val FALLBACK_SCREEN_CORNER_DP = 28
         private const val MAX_ARCHIVED_USER_IMAGE_PREVIEWS = 4
+
+        const val MAX_CONCURRENT_RUNS = RuntimeRunRegistry.MAX_ACTIVE_RUNS
+        private const val MEMORY_QUEUE_TTL_MS = 5 * 60 * 1000L
+        private const val MEMORY_QUEUE_INTERVAL_MS = 5_000L
+        private const val MEMORY_QUEUE_MAX = 8
+        const val ACTION_PIN_CAPSULE = "io.github.mangi.eta.agent.runtime.PIN_CAPSULE"
+        const val ACTION_UNPIN_CAPSULE = "io.github.mangi.eta.agent.runtime.UNPIN_CAPSULE"
+        const val ACTION_CLEAR_READ = "io.github.mangi.eta.agent.runtime.CLEAR_READ"
+        const val ACTION_MARK_READ = "io.github.mangi.eta.agent.runtime.MARK_READ"
+        const val ACTION_PAUSE_RUNS = "io.github.mangi.eta.agent.runtime.PAUSE_RUNS"
+        const val ACTION_RESUME_RUNS = "io.github.mangi.eta.agent.runtime.RESUME_RUNS"
+        const val ACTION_STOP_RUNS = "io.github.mangi.eta.agent.runtime.STOP_RUNS"
+        const val ACTION_PAUSE_RUN = "io.github.mangi.eta.agent.runtime.PAUSE_RUN"
+        const val ACTION_RESUME_RUN = "io.github.mangi.eta.agent.runtime.RESUME_RUN"
+        const val ACTION_STOP_RUN = "io.github.mangi.eta.agent.runtime.STOP_RUN"
+        const val EXTRA_RUN_ID = "io.github.mangi.eta.agent.runtime.EXTRA_RUN_ID"
+        const val ACTION_SUPPLEMENT_RUN = "io.github.mangi.eta.agent.runtime.SUPPLEMENT_RUN"
+        const val EXTRA_SUPPLEMENT_TEXT = "io.github.mangi.eta.agent.runtime.EXTRA_SUPPLEMENT_TEXT"
+        const val EXTRA_SUPPLEMENT_CONVERSATION_ID = "io.github.mangi.eta.agent.runtime.EXTRA_SUPPLEMENT_CONVERSATION_ID"
+        const val ACTION_REFRESH_FLUID = "io.github.mangi.eta.agent.runtime.REFRESH_FLUID"
+        const val EXTRA_MARK_READ_CONVERSATION_ID = "io.github.mangi.eta.agent.runtime.MARK_READ_CONVERSATION_ID"
     }
 
     private class RuntimeConfigUnavailableException : IllegalStateException()

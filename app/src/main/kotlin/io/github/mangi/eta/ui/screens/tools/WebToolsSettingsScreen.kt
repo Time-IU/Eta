@@ -87,6 +87,7 @@ internal fun WebToolsSettingsScreen(onBack: () -> Unit) {
             CouiScaffoldPage(
                 title = stringResource(R.string.web_tools_settings_title),
                 onBack = onBack,
+                modifier = Modifier.imePadding(),
             ) {
                 if (!store.loaded) {
                     WebToolsLoadingState(store.message)

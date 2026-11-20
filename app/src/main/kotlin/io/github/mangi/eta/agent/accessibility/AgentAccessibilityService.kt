@@ -99,14 +99,19 @@ class AgentAccessibilityService : AccessibilityService() {
     override fun onServiceConnected() {
         serviceToken = SERVICE_TOKENS.incrementAndGet()
         instance = this
+        io.github.mangi.eta.core.EtaTrace.log("a11y", "服务已连接")
+        AccessibilityHealthNotifier.onConnected(this)
     }
 
     override fun onUnbind(intent: Intent?): Boolean {
+        io.github.mangi.eta.core.EtaTrace.log("a11y", "服务已解绑（onUnbind）")
+        AccessibilityHealthNotifier.onDisconnected(this, "服务已被系统或设置界面解绑")
         clearCurrentInstance()
         return super.onUnbind(intent)
     }
 
     override fun onDestroy() {
+        io.github.mangi.eta.core.EtaTrace.log("a11y", "服务销毁（onDestroy）")
         clearCurrentInstance()
         scrollEventExecutor.shutdownNow()
         queryExecutor.close()
@@ -122,6 +127,17 @@ class AgentAccessibilityService : AccessibilityService() {
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
+        if (event?.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
+            val packageName = event.packageName?.toString().orEmpty()
+            val eventWindow = windows.firstOrNull { it.id == event.windowId }
+            if (eventWindow?.displayId == android.view.Display.DEFAULT_DISPLAY &&
+                packageName.isNotBlank() && packageName != lastTriggerPackage) {
+                lastTriggerPackage = packageName
+                if (packageName != this.packageName) {
+                    io.github.mangi.eta.agent.automation.AgentTaskScheduler.publish(this, "app_foreground", "${event.eventTime}:$packageName", JSONObject().put("packageName", packageName))
+                }
+            }
+        }
         when (event?.eventType) {
             AccessibilityEvent.TYPE_WINDOWS_CHANGED,
             AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED -> {
@@ -146,7 +162,11 @@ class AgentAccessibilityService : AccessibilityService() {
         }
     }
 
-    override fun onInterrupt() = Unit
+    override fun onInterrupt() {
+        io.github.mangi.eta.core.EtaTrace.log("a11y", "onInterrupt：无障碍被系统打断")
+        AccessibilityHealthNotifier.onDisconnected(this, "无障碍被系统打断（onInterrupt）")
+    }
+    private var lastTriggerPackage: String = ""
 
     /**
      * 一次观察只查询目标显示屏，窗口、包名与节点来自同一次选窗。
@@ -2404,6 +2424,7 @@ class AgentAccessibilityService : AccessibilityService() {
                 hasUniqueId = hasUniqueId,
                 snapshotTruncated = truncated,
                 identityMatchCount = matches,
+                clickable = target.clickable,
             )
         }
     }

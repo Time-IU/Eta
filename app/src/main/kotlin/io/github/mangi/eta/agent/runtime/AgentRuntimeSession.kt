@@ -19,7 +19,11 @@ internal class AgentRuntimeSession(
     resultSink: ((AgentRuntimeWire.RunResult) -> Unit)? = null,
     private val operation: String = AgentRuntimeWire.OP_CHAT,
     private val beforeTerminalPublish: (AgentRuntimeWire.RunResult) -> Unit = {},
+    /** 这次 run 属于哪条对话；系统入口/子智能体可能为空，结束通知就退回 runId。 */
+    val conversationKey: String = "",
 ) {
+    val virtualUiRouted = java.util.concurrent.atomic.AtomicBoolean(false)
+    val mainScreenFallbackApproved = java.util.concurrent.atomic.AtomicBoolean(false)
     private enum class State {
         RUNNING,
         COMMITTING,
@@ -50,7 +54,13 @@ internal class AgentRuntimeSession(
     private data class Subscriber(
         val eventSink: (AgentEvent) -> Unit,
         val resultSink: (AgentRuntimeWire.RunResult) -> Unit,
+        val kind: SubscriberKind = SubscriberKind.RUN,
+        /** 界面重连后由最新订阅者接管事件；旧订阅者只保留结果回执，避免同一增量投递多遍。 */
+        var receivingEvents: Boolean = true,
     )
+
+    /** 订阅来源：run 是本次执行的发起方，attach 是界面重连。 */
+    private enum class SubscriberKind { RUN, ATTACH }
 
     init {
         if (eventSink != null || resultSink != null) {
@@ -73,7 +83,9 @@ internal class AgentRuntimeSession(
             if (event is AgentEvent.SearchSuggestions &&
                 !searchSuggestionsBudget.accept(event.round, event.index, event.html)) return false
             recordForReplay(event)
-            subscribers.forEach { it.eventSink(event) }
+            subscribers.forEach { subscriber ->
+                if (subscriber.receivingEvents) subscriber.eventSink(event)
+            }
             true
         }
 
@@ -87,9 +99,18 @@ internal class AgentRuntimeSession(
         onReplayComplete: () -> Unit = {},
     ): Boolean = lock.withLock {
         if (state == State.TERMINAL) return false
-        replayEvents.forEach(eventSink)
+        // 界面重连时旧的 attach 订阅者对应的界面已经销毁，留着只会把同一事件投递多遍。
+        subscribers.removeAll { it.kind == SubscriberKind.ATTACH }
+        subscribers.forEach { it.receivingEvents = false }
+        replayEvents.forEach { event ->
+            // 这是完整安全快照，不是对旧 UI 的追加：Client.AttachDelivery 在 ACK 前收集，
+            // AgentAppState.restoreRunEvents 会 resetForReplay 后一次重建当前 run。
+            // 文本/思考增量必须保留；仅 replayProjection 排除私有工具参数增量。
+            // 旧订阅停收后续事件与这里是否回放历史是两个独立契约。
+            eventSink(event)
+        }
         onReplayComplete()
-        subscribers += Subscriber(eventSink, resultSink)
+        subscribers += Subscriber(eventSink, resultSink, SubscriberKind.ATTACH)
         true
     }
 
@@ -107,7 +128,9 @@ internal class AgentRuntimeSession(
             if (state != State.RUNNING || operation != AgentRuntimeWire.OP_CHAT || !controller.steer(text)) return null
             eventFactory().also { event ->
                 recordForReplay(event)
-                subscribers.forEach { it.eventSink(event) }
+                subscribers.forEach { subscriber ->
+                    if (subscriber.receivingEvents) subscriber.eventSink(event)
+                }
             }
         }
 

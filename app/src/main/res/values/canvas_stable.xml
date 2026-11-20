@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="canvas_settings_loading">Loading saved canvas settings…</string>
+    <string name="canvas_settings_saving">Saving local settings and checking synchronization…</string>
+    <string name="canvas_settings_read_failed">Saved settings could not be read. Any last known values are read-only and may be outdated. Retry reading before making changes; earlier Hook confirmation does not confirm the current read.</string>
+    <string name="canvas_settings_read_retry">Retry settings read / Hook synchronization</string>
+</resources>

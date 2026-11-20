@@ -1,3 +1,5 @@
+> **未发布的集成工作区：不是已验收版本。** 本次把 `58a1faec` 的增量与 Time-IU 非官方定制基线 `17a73fdb` 整合；下面的原基线说明不是本次合并的测试结果。所有既有定制功能、语言、非官方归属及构建/许可说明继续保留；新增能力仅为待验证目标，不代表构建、设备端或视觉验收通过。远端采用 PolyForm Noncommercial 1.0.0，与当前 GPL-3.0 基线不同；尚未确认合并及再分发条件，本次不发布、不替换 LICENSE，也不作许可兼容结论。
+
 # Agent Runtime
 
 Eta 的 Agent Runtime 负责把一次用户输入组织为模型回合、工具执行和可持久化的增量 transcript。它运行在模块自身进程；Hook 进程只负责识别入口、发送请求和接收结果。
@@ -422,3 +424,132 @@ App 恢复时以 `checkpoint + outbox + active session` 统一对账，不再用
 ```bash
 ./gradlew :app:assembleDebug :app:testDebugUnitTest :app:lintDebug
 ```
+
+## 远端增量参考（58a1faec，未验收）
+
+以下按完整 Markdown 段落、表格及代码块补入尚未出现在本地正文中的远端描述。它们是待核对的设计与集成目标，不是当前集成已工作的证明；与上方本地约定冲突时不得据此删减本地功能，也不自动采用远端默认值或界面重设计。相关代码、设备权限及双界面行为需后续验证。
+
+### 代码边界
+
+- `AgentModelClient`：稳定门面、配置与跨进程会话 DTO。
+- `AgentLoop`：单次 run 的状态机，不依赖 Android Service、Room 或 Compose。
+- `AgentPromptBuilder`：系统约束、Skill 索引、历史和当前用户输入。
+- `AgentConversationCodec`：Provider JSON 与稳定会话 DTO 的转换。
+- `AgentToolCatalog` 及分组目录：模型可见的工具 schema，不执行工具。
+- `AgentTraceFormatter`：只生成可展示、可记录的脱敏摘要。
+- `AgentWebTools`：公开网页搜索、匿名 HTTP 正文读取与当前 run 的分页快照；不占用共享 WebView 会话。
+- `AgentProviderClient`：OpenAI-compatible、Anthropic 与 Gemini Interactions 协议边界。
+- `AgentRunController`：取消、暂停和 steering 队列。
+- `AgentRuntimeSession`：每个 run 自持 reply channel，并保证唯一最终结果。
+- `AgentRuntimeRunExecutor`：从 Skill/工具初始化到模型执行、资源清理和终态提交的统一异常边界。
+- `AgentRuntimeService`：Android 生命周期、入口 IPC 和浮层宿主；不再内联 Agent 执行循环。
+- `ShellProcessSupervisor`：Android/Alpine/Debian Shell 进程的接纳、独立进程组、取消和回收；终端协议不承担进程所有权细节。
+
+### Loop 语义
+
+- steering 默认逐条排队，只在当前 turn 完整结束后注入；它不会取消当前 HTTP 请求或关闭工具资源。
+- 同一 assistant 消息中的全部 tool result 必须连续写入，再追加不受 Provider 原生 tool-result image 支持的图片观察。
+- `finish_reason=length` 或 `max_tokens` 且包含工具调用时，不执行任何可能被截断的参数；为每个调用写入结构化错误结果，让模型重新规划。
+- 只有明确的 `tool_calls` / `tool_use` 终止原因才允许执行工具；`stop`、内容过滤或未知终止原因中夹带的调用一律作为协议矛盾拒绝。
+- 工具 Schema 用于向模型说明参数。Loop 只确认工具在本轮目录中可用，参数原样交给本地执行器或 MCP 服务处理，不在客户端重复运行 JSON Schema 预检。必需参数在实际使用处读取，执行失败作为工具结果返回模型；未使用的额外字段不导致整次调用失败。
+- transcript 只返回本次 run 新增的 assistant、tool 和运行中 steering 消息，不重复旧 history 或本轮初始用户消息。
+- GUI/终端工具保持串行。Android 前台状态和会话式 Shell 都不具备可安全并行的通用语义。
+- 单次 run 不设置固定回合数或总时限，由模型自然结束、用户取消或不可恢复错误终止。
+- cancel 是终止信号；pause 是检查点阻塞；steering 是下一回合输入。三者不能互相模拟。
+- cancel 的主线程路径只做原子终态与资源关闭：共享浏览器按 runId 校验归属；终端立即封闭新的前台进程接纳，并在后台按独立进程组终止同步命令与会话、回收所属线程与流；已提交的后台命令由 App 宿主管理，需单独停止。Android 上 `setsid` 或 PID/PGID ownership 握手不可用时会 fail closed；非 Android 测试环境才允许父子树快照回退。终止前还会核验随机 ownership token，避免陈旧 PGID 复用后误杀无关进程。
+- 最终 steering 检查会原子关闭接收入口；Loop 返回后不会再把无人消费的补充指令误报为已接收。补充指令也不会解除 pause。
+- 新 run 替换旧 run、用户取消和正常完成都通过 `AgentRuntimeSession` 的 `RUNNING → COMMITTING → TERMINAL` 状态机竞争唯一终态；提交胜者独占 outbox、归档和最终发布，客户端等待最终结果或 Binder 断连，不按等待时长取消任务。
+- 入口请求只能缩小工具能力，不能自行授权。Runtime 在开始 run 时裁剪配置，在每次浏览器、终端和设备工具执行前重新读取用户开关，并在 thinking 关闭时移除自定义请求体中的 reasoning/thinking 覆盖字段。
+- 设备工具分为直达工具、敏感读取工具和敏感操作工具，当前均默认开启。Runtime 在每次执行前重新读取用户开关；开关允许且参数符合工具 Schema 后即可执行，不再匹配用户原话，也不维护关键包、系统应用或 Settings key 黑名单。
+- 微信发送不提供专用工具、参数协议或额外策略层，完全使用通用 GUI 工具观察和操作微信界面。
+- 通知、短信验证码、Wi‑Fi 凭据、日志及设置读写返回的原始值属于瞬时敏感工具数据。当前模型回合可以使用原始值，但持久 transcript 会同时替换对应工具参数和结果，避免进入会话数据库或后续 IPC。
+
+### Provider 协议
+
+Provider 默认基础提示词将 Eta 定义为运行在 Android 设备上的 AI 助手，可以回答问题、与用户交流，也可以通过工具了解设备情况并执行操作；回答使用用户的语言，简洁、直接、自然。默认正文以 `BuiltinProviders.DEFAULT_SYSTEM_PROMPT` 为准；Provider 提示词为空时使用该默认值，已有非空配置保持原值。
+
+Runtime 独立于 Provider 自定义提示词注入 Eta 身份，以“当前配置的模型”标注 `ModelConfig.model` 的实际值，随本次运行配置更新，不使用模型显示名或历史消息推断当前模型，也不据此推断部署版本、知识截止日期或能力。通用交流规则要求日常问答直接回答、仅在缺少关键参数时澄清、按用户需求调整详略，并如实交代工具操作结果；个性化分析区分事实与推测，不根据零散记录断言性格、动机或心理状态。工具、记忆与 Skills 等系统规则仍按运行时条件追加。
+
+Codex 复用 Responses 编解码，使用扁平函数工具、`store: false` 与流式响应，并在后续轮次回传加密推理项。请求发送至 `https://chatgpt.com/backend-api/codex/responses`，工作区 Header 与 Bearer 从同一份令牌获取；刷新后不接受工作区变化。不支持的自定义参数在请求前明确拒绝。Grok 使用订阅代理的 Chat Completions 流。授权说明参见 [Codex 账号认证](https://developers.openai.com/codex/auth/)与 [xAI 身份认证](https://docs.x.ai/build/enterprise)。
+
+目录结果携带连接配置快照和非敏感的登录代次，读取结束及同步提交前均校验，模型页离开时取消读取。同步时匹配模型保留本地 ID 和用户覆盖值，自动模型标记为远端来源，并清理远端已移除的自动模型；手动配置保留。预设更新只清理旧预设并补入尚未同步连接的新预设，不覆盖远端模型，也不在保存空连接时重新填充。Grok 目录按实际推理标识、隐藏字段与明确声明的推理档位解释，不接受其中的地址或凭据覆盖；仅列入当前订阅连接采用的 Chat Completions 路由，全部可见模型声明其他协议时明确报错，不把协议不兼容当作空目录。
+
+Gemini 的完整原生 steps、思考和搜索签名只在当前 run 内回放，不进入稳定会话或运行归档。签名工具链尚未完成时保持请求前缀并延后自动压缩，强制压缩明确失败。跨 run、跨 Provider 或压缩后，旧消息与工具记录作为明确标注的文本历史投影，不把缺少签名的旧工具交换重新构造成原生调用。工具截图仍沿用完整工具批次后的单轮观察消息。思考档位来自 `GeminiModelCapabilities`；已确认强制思考的模型不能选择 Off，未知手动模型仅提供 Default，不猜测档位或工具混用能力。原生模型目录支持分页并限制累计大小，已有兼容连接不会自动改为 Gemini。
+
+Gemini Google Search 仅在用户开启、模型已确认支持、入口声明并通过 Runtime 校验可以展示建议时生效。Eta 聊天和原生助手浮窗支持该能力；小布、小爱、旧客户端和其他入口保持本地搜索。搜索与函数混用使用 `validated`，能力目前属于预览。搜索调用与结果的完整签名回放留在模型层，引用按 UTF-8 字节位置转换；搜索建议附在对应回答下方，无正文的工具轮将建议延后到下一次回答。建议通过独立只读 WebView 展示，脚本、文件访问和网络子资源关闭，用户点击 HTTP(S) 链接交给外部浏览器。
+
+### MCP 工具
+
+工具默认关闭，服务器也可整体停用。添加服务器时先发现并缓存工具目录，用户再逐项启用；未标记只读的工具需要额外确认。现代服务的目录按 `ttlMs` 到期并在下次 run 前刷新，legacy 目录由用户手动刷新。每次 run 开始时一并冻结启用目录与 Bearer Token，并生成带服务器命名空间的模型工具名，因此后续设置变化不会改变正在执行的 schema 或账户。Eta 不因 `$ref`、组合关键字、条件关键字等复杂 Schema 禁用工具，而是保留参数声明，由 Provider 适配其接口格式，实际参数交给 MCP 服务解释；现代 Streamable HTTP 的 `x-mcp-header` 参数会同步映射为请求头。
+
+### 终端环境
+
+| 工具 | 调用方式 | 生命周期 |
+| --- | --- | --- |
+| `terminal` | 普通调用只需 `command`，`action` 默认 `exec`；`open` 创建会话，`session_id` 复用，`close` 关闭。 | 命令和会话属于当前 Agent run。 |
+| `terminal_job` | `start` 启动，`list` 查看任务，`read` 读取日志，`wait` 等待完成，`stop` 停止。 | 回复结束后继续执行；完成、失败或停止时通知用户，状态与日志可在后续 run 查询。 |
+| `terminal_daemon` | `start / list / logs / stop` 管理后台服务，使用 `task_id`。 | 可跨 run 运行，仍可能因进程退出、系统回收或重启结束。 |
+
+`TerminalExecutionContext` 在 run 创建时冻结工作目录、所选 Linux 发行版和 rootfs 路径，并由同一个对象向执行器和模型提供事实。Android 的新调用按当前已确认授权选择默认身份：Root 可用则直接用 Root，否则用 App UID；显式 `identity` 优先。已有会话和后台任务保留创建时身份，授权变化不移动文件。模型首轮等待 App 已经启动的 Root 探测，不让检测中的 Root 用户先以普通身份试错；已有有效授权时无需重复调用检测工具。后台服务的启动后端与同一份上下文绑定，不跟随运行中的 Linux 设置变更。模型能看到实际工作目录、Linux 后端、就绪状态与 `/workspace` 的宿主映射，避免把 PRoot 私有工作区和 chroot Root 工作区当成同一目录。持久目录、任务记录与已有 Linux 安装均不迁移。
+
+### 后台执行生命周期
+
+Kimi 使用 `kimi web --no-open`，按发行版及后端复用活跃实例。启动失败或取消只清理本次新建的进程；复用实例保留。服务使用 `START_NOT_STICKY`，系统强停或重启后不自动重放命令。通知授权被拒绝不会直接阻止合法前台启动，但系统后台启动限制与厂商进程回收策略仍然生效。
+
+### 上下文与续接
+
+App 按上次成功提交的内容比较会话变更，只更新变化的元数据、上下文字段和展示消息。追加消息保留已有记录；编辑、重排或删除时替换变化位置之后的消息，同一事务清理对应分块并更新已应用标记及会话选择。保存失败不推进比较基线，后续可以重试。流式占位等未入库消息会在排序中留下空洞，重启加载后列表下标与库内排序不一致的会话不进入基线，首次保存整段重写并重排。导入备份期间暂停会话保存，未保存的结果不回执；导入成功后按库内数据整体重载，失败时数据库已回滚，恢复保存并补写暂停期间的变更。加载逐会话读取和转换消息，避免同时保留所有会话的数据库行副本；当前工作台仍会持有已加载的会话状态。
+
+### 上下文摘要
+
+压缩使用当前会话模型，额外请求会计费。摘要请求禁止本地及托管工具，也不接受自定义正文覆盖其输入；输入移除敏感工具原始参数、结果、图片正文与 opaque reasoning。自动与手动压缩均覆盖可安全替换的已完成历史，保留当前用户指令与未消费图片。主会话切分只能发生在完整工具批次之间。
+
+摘要一次发送全部待整理的脱敏历史，不按估算大小分片，不进行细分或网络重试。请求设置覆盖连接、服务端处理和流式读取的总超时，SSE 心跳不能无限延长等待。只有完整、有界且实际序列化文本缩小的摘要才提交；溢出、空摘要、截断、过滤、工具调用、超时或取消均保留原文，不提交半成品。
+
+摘要作为带有明确说明的 assistant 历史保存，不提升为系统指令。成功后重建模型上下文，保留系统约束及近期规范化消息；被压缩的原文始终保留在完整脱敏历史中，不用摘要覆盖。Responses 的旧 opaque output Items 不跨越压缩边界，也不跨 run、跨 Provider 持久化。
+
+App 会话提供 `conversation_history` 工具，搜索或分页读取当前会话的完整脱敏原文。工具由 Runtime 绑定会话身份，模型不能指定其他会话；单次输出有界并返回续读游标，大消息可按字符偏移继续读取。它不依赖 MEMORY.md 开关，也不向模型暴露数据库路径。摘要仍然有损，历史工具让模型能按需核对摘要省略的细节；完整存储不代表每次请求都把所有历史塞入模型窗口。编辑或删除旧轮次时从完整历史重建对应前缀，旧版本已缺失的前缀沿用明确提示。
+
+设计依据：[Android Binder 事务限制](https://developer.android.com/reference/android/os/TransactionTooLargeException)、[ParcelFileDescriptor](https://developer.android.com/reference/android/os/ParcelFileDescriptor)、[CursorWindow](https://developer.android.com/reference/android/database/CursorWindow)。参考的会话模式见 [pi 的追加式压缩记录与上下文重建](https://github.com/earendil-works/pi/blob/b215884021491772a1eb7a9f92c6653a2a52a69d/packages/coding-agent/docs/compaction.md) 和 [Kimi Code 的历史恢复指针](https://github.com/MoonshotAI/kimi-code/blob/b1807253c34e12b0ecf60c9b4da3890d0c80ce72/packages/agent-core-v2/src/agent/fullCompaction/contextRecovery.ts)。Eta 使用 Room 分块及当前会话读取工具适配 Android，不依赖桌面文件路径。
+
+### 斜杠命令调用技能
+
+输入框的斜杠命令表由「内置命令 + 全部已安装技能」组成（`AgentCommands.withSkills`），技能命令名就是技能 id；与内置命令撞名时加 `skill-` 前缀，保证解析结果唯一。界面层在技能开关变化时把列表同步给 `AgentAppState`，所以命令面板里看到的与能被解析执行的是同一份；解析与分派都在本地完成，技能命令不进入 Runtime 的命令分支，也不产生额外的模型请求。
+
+技能开关只决定它是否进入系统提示的 Skills 索引，不决定能否被显式调用：开关关掉的技能照样出现在命令表里（面板标「未启用」），命中后按 id 从管理列表取条目并加载正文。这样「不想让模型自动挑中」和「我这一轮就是要用它」是两件事。
+
+面板高度封在 320dp 以内、内容可滚动，技能条目显示完整描述（不再单行省略），也不再冗余标注 `[任务描述]` —— 需要补参数的命令点选后只补全命令名。用户消息气泡按 `<skill_command>` 抬头渲染 `/技能名 · 技能` 标记，因此与普通消息一眼可分；复制时剥掉技能正文，只留任务文本。
+
+命令的反馈分三种形态，不再统一走 Toast（`LENGTH_SHORT` 约 2 秒，不可滚动、不可交互）：
+
+- **面板**：`/help`、`/skills`、`/model` 直接展开命令面板（内置/技能分组，模型分组按 provider），条目可点——命令需要参数时把 `/名字 ` 写回输入框并聚焦，模型点一下即切换；面板由 `AgentAppState.commandPalette` 驱动，输入普通文本或点关闭即收起。面板高度固定 200dp（与 `@` 引用面板同一思路），打开期间输入框内的状态行（tok/s、MCP、技能、内存）一并收起，条目描述默认两行，长按条目把完整说明摊到结果卡里。这里不能用「输入框上沿到状态栏」的实测空间当上限：输入框会被面板推着上移，量到的空间越来越大，形成正反馈，最终把输入框挤到键盘后面。往输入框回填文本必须同时递增 `inputSyncVersion`，否则本地 `TextFieldState` 不会跟随业务状态（这条通道也是「撤回排队消息」用的那条）。
+- **结果卡**：`/status`、`/effort`、`/rename` 用法错误、技能读取失败这类信息写进 `AgentChatState.commandResult`，显示在输入框上方，停留到用户点关闭或开始下一次发送。
+- **消息流胶囊**：技能正文被截断、或调用的是开关关着的技能时，追加一条 `SystemNoticeCode.CommandNote`，随会话保留、可回看，不进入模型 history。
+
+命中技能命令时，App 在 IO 线程读取该技能的 `SKILL.md`（沿用 `SkillLoader` 的 canonical root 与符号链接检查），把正文内联进一条 `<skill_command id name path>` 块，再接本次任务描述，作为普通用户消息提交并启动 run：
+
+- 正文上限 6000 字符，超出部分只保留 `path` 提示，需要细节时模型按路径读取或走 `skills_read`；
+- 注入正文不依赖 `skills_read`，省 token 档位（非 FULL）同样能调用技能；
+- 展示层由 `AgentFileReferencePromptCodec.parse` 统一剥掉技能块，气泡里只留用户自己写的那句话，搜索、导出同样干净；
+- 写进 history 的表示由 `compactForHistory` 压成一行自闭合标记，避免之后每一轮重复整段正文；
+- 命令没带任务描述时不发送，只提示一句并把草稿留在输入框；读取失败按 `技能正文读取失败` 提示，不发送半截上下文。
+
+设备、文件和一方应用的专用结果摘要按工具语义展示已验证的状态变化、已完成的动作或本次返回数量。闹钟和计时器的 Intent 派发仅显示请求已提交；日历更新只列改动字段类别，便签回收不表述为永久删除。文件摘要显示读写规模、替换次数或匹配数量，并保留分页与扫描范围限制；技能安装显示下一轮可用。这些专用摘要不包含文件正文、路径、日历和便签内容、网络名称或任意设置原始值，未知字段不推断为零或关闭。既有历史记录保留原摘要，不重新执行工具或补造变更详情。
+
+### 验证
+
+- `AgentModelClientLoopTest`
+- `AgentConversationCodecTest`
+- `AgentRunControllerTest`
+- `AgentContinuationBuilderTest`
+- `AgentRuntimePolicyTest`
+- `AgentRuntimeSessionTest`
+- `AgentSkillCommandTest`
+- `AgentRunCheckpointStoreTest`
+- `AgentRunMessageProjectorTest`
+- `AgentToolCatalogTest`
+- `McpProtocolValidationTest`
+- `McpRunContextTest`
+- `AgentMemoryStoreTest`
+- `AgentMemoryContextBuilderTest`
+- `EtaDatabaseMigrationTest`

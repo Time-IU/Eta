@@ -2,6 +2,7 @@ package io.github.mangi.eta.ui.app
 
 import android.Manifest
 import android.app.Activity
+import android.content.ComponentName
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
@@ -10,6 +11,21 @@ import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.size
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Close
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.zIndex
+import top.yukonga.miuix.kmp.basic.Icon
+import top.yukonga.miuix.kmp.basic.IconButton
+import top.yukonga.miuix.kmp.theme.MiuixTheme
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -42,6 +58,8 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
 import io.github.mangi.eta.EtaApp
 import io.github.mangi.eta.R
+import io.github.mangi.eta.agent.accessibility.AgentAccessibilityService
+import io.github.mangi.eta.agent.runtime.AgentRuntimeWire
 import io.github.mangi.eta.agent.device.BoundedRootCommandExecutor
 import io.github.mangi.eta.agent.device.DeviceLocationProvider
 import io.github.mangi.eta.agent.device.RootAccess
@@ -52,6 +70,8 @@ import io.github.mangi.eta.data.repository.RuntimeConfigRepository
 import io.github.mangi.eta.ui.AppearanceSettingsScreen
 import io.github.mangi.eta.ui.IncomingShareRequest
 import io.github.mangi.eta.ui.SettingsScreen
+import io.github.mangi.eta.ui.components.ConversationNavigatorSheet
+import io.github.mangi.eta.ui.screens.branches.ConversationBranchScreen
 import io.github.mangi.eta.ui.components.MiuixDialogActions
 import io.github.mangi.eta.ui.components.coui.CouiConfirmDialog
 import io.github.mangi.eta.ui.components.coui.CouiInputDialog
@@ -60,6 +80,7 @@ import io.github.mangi.eta.ui.markdown.MarkdownTone
 import io.github.mangi.eta.ui.markdown.rememberMarkdownStyle
 import io.github.mangi.eta.ui.markdown.staticMarkdownDocumentCache
 import io.github.mangi.eta.ui.model.AgentHomeAction
+import io.github.mangi.eta.ui.model.BranchNodeUi
 import io.github.mangi.eta.ui.model.AgentMemoryAction
 import io.github.mangi.eta.ui.model.AgentSkillsAction
 import io.github.mangi.eta.ui.model.AgentSystemEnhanceAction
@@ -86,8 +107,12 @@ import io.github.mangi.eta.ui.screens.characters.CharacterPersonaScreen
 import io.github.mangi.eta.ui.screens.enhance.SystemEnhanceScreen
 import io.github.mangi.eta.ui.screens.home.AgentHomeScreen
 import io.github.mangi.eta.ui.screens.mcp.McpServerDetailScreen
+import io.github.mangi.eta.ui.screens.github.GitHubAccountScreen
 import io.github.mangi.eta.ui.screens.mcp.McpServersScreen
 import io.github.mangi.eta.ui.screens.memory.AgentMemoryScreen
+import io.github.mangi.eta.ui.screens.tasks.AgentTasksScreen
+import io.github.mangi.eta.ui.screens.usage.DataUsageScreen
+import io.github.mangi.eta.ui.screens.usage.TokenUsageScreen
 import io.github.mangi.eta.ui.screens.permissions.PermissionHealthScreen
 import io.github.mangi.eta.ui.screens.settings.AssistantOverlaySettingsScreen
 import io.github.mangi.eta.ui.screens.settings.ConversationTitleSettingsScreen
@@ -97,6 +122,7 @@ import io.github.mangi.eta.ui.screens.terminal.LinuxEnvironmentScreen
 import io.github.mangi.eta.ui.screens.terminal.LinuxFilesScreen
 import io.github.mangi.eta.ui.screens.terminal.SharedFoldersScreen
 import io.github.mangi.eta.ui.screens.terminal.TerminalEntryScreen
+import io.github.mangi.eta.ui.screens.terminal.WorkspaceBrowserSheet
 import io.github.mangi.eta.ui.screens.terminal.WorkspaceScreen
 import io.github.mangi.eta.ui.screens.tools.AgentToolsScreen
 import io.github.mangi.eta.ui.screens.tools.WebToolsSettingsScreen
@@ -106,6 +132,7 @@ import io.github.mangi.eta.ui.voice.SpeechSettingsScreen
 import io.github.mangi.eta.ui.voice.SpeechSynthesisScreen
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import top.yukonga.miuix.kmp.basic.TextField
@@ -123,6 +150,7 @@ import top.yukonga.miuix.kmp.window.WindowDialog
 @Composable
 fun AgentAppRoot(
     assistantConversationKey: String? = null,
+    assistantConversationSource: String = AgentRuntimeWire.ETA_VOICE_HANDOFF_SOURCE,
     requestedConversationId: String? = null,
     onRequestedConversationOpened: () -> Unit = {},
     requestedArchivedConversation: ArchivedConversationRequest? = null,
@@ -132,16 +160,39 @@ fun AgentAppRoot(
     openSpeechSettings: Boolean = false,
     openTerminal: Boolean = false,
     onTerminalOpened: () -> Unit = {},
+    openLinuxEnvironment: Boolean = false,
+    onLinuxEnvironmentOpened: () -> Unit = {},
     onSpeechSettingsOpened: () -> Unit = {},
     onAssistantConversationOpened: (Boolean) -> Unit = {},
 ) {
     val context = LocalContext.current
+    // 用户回到 Eta：清掉悬浮胶囊上的「已完成」未读提示。
+    LaunchedEffect(Unit) {
+        runCatching {
+            context.startService(
+                android.content.Intent(
+                    context,
+                    io.github.mangi.eta.agent.runtime.AgentRuntimeService::class.java,
+                ).setAction(io.github.mangi.eta.agent.runtime.AgentRuntimeService.ACTION_CLEAR_READ),
+            )
+        }
+    }
     val resources = LocalResources.current
     val uiScope = rememberCoroutineScope()
     val backStack = rememberNavBackStack<AppRoute>(AppRoute.Home)
+    val navigator = remember(backStack) { AgentNavigator(backStack) }
+    // 返回栈里出现两个同 key 的条目会让 NavDisplay 直接抛 IllegalArgumentException
+    // （Duplicate contentKey on the back stack）并崩在主线程；这里对所有来源兜底去重。
+    LaunchedEffect(backStack.size) {
+        val seen = mutableSetOf<Any>()
+        var index = 0
+        while (index < backStack.size) {
+            if (!seen.add(backStack[index])) backStack.removeAt(index) else index++
+        }
+    }
     LaunchedEffect(openSpeechSettings) {
         if (openSpeechSettings) {
-            if (backStack.lastOrNull() != AppRoute.SpeechSettings) backStack.add(AppRoute.SpeechSettings)
+            navigator.push(AppRoute.SpeechSettings)
             onSpeechSettingsOpened()
         }
     }
@@ -151,7 +202,13 @@ fun AgentAppRoot(
             onTerminalOpened()
         }
     }
-    val navigator = remember(backStack) { AgentNavigator(backStack) }
+    LaunchedEffect(openLinuxEnvironment) {
+        if (openLinuxEnvironment) {
+            // 从「安装进度」通知点进来时，直接落到 Linux 工具环境页，而不是停在首页。
+            if (backStack.lastOrNull() != AppRoute.LinuxEnvironment) backStack.add(AppRoute.LinuxEnvironment)
+            onLinuxEnvironmentOpened()
+        }
+    }
     var navigationResetKey by rememberSaveable { mutableIntStateOf(0) }
     val appViewModel = viewModel<AgentAppViewModel>()
     val agentState = appViewModel.state
@@ -164,11 +221,19 @@ fun AgentAppRoot(
     val skills = appViewModel.skills
     val memory = appViewModel.memory
     val permissionHealth = appViewModel.permissionHealth
+    // 分享进来的内容：界面就绪后回到首页，填进当前会话输入框并附图。
+    LaunchedEffect(ShareIntake.version) {
+        val payload = ShareIntake.consume() ?: return@LaunchedEffect
+        navigator.push(AppRoute.Home)
+        payload.text?.let { text -> agentState.applySharedText(text) }
+        payload.images.forEach { uri -> agentState.attachImage(uri) }
+    }
     val toolsState = remember { buildToolsState(context) }
     val characterStore = viewModel<CharacterLibraryViewModel>().store
     val communityCatalogStore = viewModel<CommunityCatalogViewModel>().store
     val requestExecutionNotifications = rememberExecutionNotificationRequest()
     val requestLocalNetworkPermission = rememberLocalNetworkPermissionRequest(permissionHealth::refreshPermissionHealth)
+    val requestBluetoothPermission = rememberBluetoothPermissionRequest(permissionHealth::refreshPermissionHealth)
     val locationPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) {
@@ -188,8 +253,78 @@ fun AgentAppRoot(
     }
 
     var conversationPaneOpen by rememberSaveable { mutableStateOf(false) }
+    // 工作区文件面板：顶栏以下的内容左移、面板从右滑入，顶栏那一行保持原样。
+    var workspaceSheetOpen by remember { mutableStateOf(false) }
+    var conversationNavigatorOpen by remember(agentState.conversationPaneState.selectedConversationId) { mutableStateOf(false) }
+    val conversationSearch = androidx.compose.runtime.key(agentState.conversationPaneState.selectedConversationId) {
+        io.github.mangi.eta.ui.components.rememberChatSearch(agentState.homeState.messages)
+    }
+    LaunchedEffect(conversationNavigatorOpen) {
+        if (conversationNavigatorOpen) conversationSearch.openSearch() else conversationSearch.close()
+    }
+    LaunchedEffect(backStack.lastOrNull()) {
+        if (backStack.lastOrNull() !is AppRoute.Home) conversationNavigatorOpen = false
+    }
+    val conversationSearchPaging = androidx.compose.runtime.key(agentState.conversationPaneState.selectedConversationId) {
+        io.github.mangi.eta.ui.components.rememberChatSearchHistoryPaging(
+        open = conversationNavigatorOpen,
+        query = conversationSearch.query,
+        includeOutline = true,
+        canLoad = !agentState.homeState.isStreaming && agentState.homeState.messageEdit == null,
+        hasEarlier = agentState.homeState.hasEarlierMessages,
+        before = agentState.homeState.messageStartIndex,
+        loadState = agentState.historyLoadState,
+        onLoadEarlier = { agentState.updateHistoryViewport(false); agentState.loadEarlierMessages() },
+        )
+    }
+    // 工具与技能面板的数据：改成「打开时主动读一次」，不依赖 Flow 的首次发射，
+    // 也不怕读取失败时静默为空——面板每次打开都会重新拉。
+    var mcpServers by remember { mutableStateOf<List<io.github.mangi.eta.data.model.McpServerSetting>>(emptyList()) }
+    var toolAccessRefresh by remember { androidx.compose.runtime.mutableIntStateOf(0) }
+    LaunchedEffect(toolAccessRefresh) {
+        runCatching { io.github.mangi.eta.data.repository.McpServerRepository.servers() }
+            .onSuccess { mcpServers = it }
+        if (appViewModel.skills.skillsState.skills.isEmpty()) {
+            appViewModel.skills.refreshSkills()
+        }
+    }
+    val skillItems = appViewModel.skills.skillsState.skills
+    // 斜杠命令要能直接调用技能：技能开关一变就把命令表同步给 AgentAppState。
+    LaunchedEffect(skillItems) {
+        agentState.updateSkillCatalog(skillItems)
+    }
+    val toolAccess = remember(mcpServers, skillItems) {
+        io.github.mangi.eta.ui.model.ToolAccessUiState(
+            items = mcpServers.map { server ->
+                io.github.mangi.eta.ui.model.ToolToggleItem(
+                    id = server.id,
+                    title = server.name,
+                    subtitle = context.getString(
+                        R.string.tool_access_tool_count,
+                        server.enabledToolNames.size,
+                        server.tools.size,
+                    ),
+                    enabled = server.enabled,
+                    kind = io.github.mangi.eta.ui.model.ToolToggleKind.Mcp,
+                )
+            } + skillItems.map { skill ->
+                io.github.mangi.eta.ui.model.ToolToggleItem(
+                    id = skill.id,
+                    title = skill.name,
+                    subtitle = skill.description.take(60),
+                    enabled = skill.enabled,
+                    kind = io.github.mangi.eta.ui.model.ToolToggleKind.Skill,
+                )
+            },
+        )
+    }
     var conversationRenameTarget by remember { mutableStateOf<ConversationSummaryUi?>(null) }
+    var categoryMoveTarget by remember { mutableStateOf<ConversationSummaryUi?>(null) }
+    // 工作区里点的 Markdown：路径 to 内容。宿主放在页面层，避免在工作区 sheet 里再套一层弹层。
+    var workspaceMarkdown by remember { mutableStateOf<Pair<String, String>?>(null) }
+    val workspaceStore = remember { io.github.mangi.eta.ui.app.WorkspaceFileStore(context) }
     var conversationDeleteTarget by remember { mutableStateOf<ConversationSummaryUi?>(null) }
+    var conversationBatchDeleteTarget by remember { mutableStateOf<List<ConversationSummaryUi>?>(null) }
     var conversationExportTarget by remember { mutableStateOf<ConversationSummaryUi?>(null) }
     var messageDeleteTarget by remember { mutableStateOf<MessageMutationTarget?>(null) }
     var messageRegenerateTarget by remember { mutableStateOf<MessageMutationTarget?>(null) }
@@ -248,13 +383,16 @@ fun AgentAppRoot(
         onArchivedConversationOpened()
     }
 
-    LaunchedEffect(assistantConversationKey) {
+    LaunchedEffect(assistantConversationKey, assistantConversationSource) {
         val conversationKey = assistantConversationKey ?: return@LaunchedEffect
-        val opened = agentState.openAssistantConversation(conversationKey)
+        val opened = agentState.openAssistantConversation(conversationKey, assistantConversationSource)
         if (opened) {
             conversationPaneOpen = false
             // 接管落到主聊天舞台：与主界面同一页面、同一侧边对话列表，不再开独立对话页。
             navigator.popToHome()
+        } else if (assistantConversationSource == "automation") {
+            navigator.popToHome()
+            navigator.push(AppRoute.Tasks)
         }
         onAssistantConversationOpened(opened)
     }
@@ -290,6 +428,7 @@ fun AgentAppRoot(
         agentState.selectConversation(conversationId)
         navigator.popToHome()
         conversationPaneOpen = false
+        conversationNavigatorOpen = false
     }
 
     fun createConversation() {
@@ -297,6 +436,7 @@ fun AgentAppRoot(
         agentState.createConversation()
         navigator.popToHome()
         conversationPaneOpen = false
+        conversationNavigatorOpen = false
     }
 
     fun openConversationBrowser() {
@@ -306,6 +446,25 @@ fun AgentAppRoot(
         context.startActivity(AgentBrowserActivity.createIntent(context, sessionKey))
     }
 
+    fun createConversationInCategory(categoryId: String?) {
+        focusManager.clearFocus()
+        agentState.createConversationInCategory(categoryId)
+        conversationPaneOpen = false
+        conversationNavigatorOpen = false
+    }
+
+    fun openAccessibilitySettings() {
+        focusManager.clearFocus()
+        // Android's per-service settings action is not exposed in the public SDK.
+        val details = Intent("android.settings.ACCESSIBILITY_DETAILS_SETTINGS")
+            .putExtra("android.intent.extra.COMPONENT_NAME", ComponentName(context, AgentAccessibilityService::class.java))
+        if (runCatching { context.startActivity(details) }.isFailure) {
+            runCatching { context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
+        }
+    }
+
+    // 标 @Composable：函数体里要读 WindowInsets（只读源）并挂工作区面板，
+    // 都不是普通函数能做的。调用点都在 NavDisplay 的 entry lambda 里，本来就是 Composable 上下文。
     @Composable
     fun RoutedShell(
         route: AppRoute,
@@ -320,15 +479,52 @@ fun AgentAppRoot(
         AgentAppShell(
             currentRoute = route,
             isCurrentRoute = backStack.lastOrNull() == route,
+            navigatorOpen = conversationNavigatorOpen,
             conversationPaneState = agentState.conversationPaneState,
             isConversationPaneOpen = conversationPaneOpen,
+            conversationStatus = {
+                io.github.mangi.eta.ui.components.ConversationStatusCapsules(
+                    model = agentState.modelPickerState.selectedModel,
+                    onOpenWorkspace = {
+                        // 会话列表和工作区都浮在对话页之上，同时开会重叠；
+                        // 按「左列表 / 中对话 / 右工作区」的层次，开右边的先把左边的收起。
+                        conversationPaneOpen = false
+                        workspaceSheetOpen = true
+                    },
+                    workspaceActive = workspaceSheetOpen,
+                    onCloseWorkspace = { workspaceSheetOpen = false },
+                )
+            },
+            workspaceShifted = workspaceSheetOpen,
+            workspaceVisible = workspaceSheetOpen,
+            onWorkspaceOpen = {
+                conversationPaneOpen = false
+                workspaceSheetOpen = true
+            },
+            onWorkspaceDismiss = { workspaceSheetOpen = false },
+            workspaceContent = {
+                WorkspaceBrowserSheet(
+                    visible = true,
+                    topInset = WindowInsets.statusBars.asPaddingValues().calculateTopPadding() + 56.dp,
+                    onDismiss = { workspaceSheetOpen = false },
+                    onOpenMarkdown = { path, text -> workspaceMarkdown = path to text },
+                )
+            },
+            conversationTrimmed = agentState.historyTrimNotice,
             onBack = { popRoute() },
-            onOpenConversationPane = { conversationPaneOpen = true },
+            onOpenConversationPane = {
+                // 反向同理：开左侧列表时把右侧工作区收起，避免两层叠在一起。
+                workspaceSheetOpen = false
+                conversationPaneOpen = true
+            },
             onDismissConversationPane = { conversationPaneOpen = false },
             onSearchConversations = { query -> agentState.updateSearchQuery(query) },
             onNewConversation = { createConversation() },
+            onNewConversationInCategory = { categoryId -> createConversationInCategory(categoryId) },
             onOpenTerminal = { pushRoute(AppRoute.Terminal) },
             onOpenBrowser = { openConversationBrowser() },
+            onOpenChatSearch = { conversationPaneOpen = false; workspaceSheetOpen = false; conversationNavigatorOpen = true },
+            onOpenBranchGraph = { pushRoute(AppRoute.ConversationBranches) },
             onSelectConversation = { conversationId -> selectConversation(conversationId) },
             onConversationTogglePin = { conversation ->
                 agentState.toggleConversationPin(conversation.id)
@@ -348,11 +544,25 @@ fun AgentAppRoot(
             onConversationDelete = { conversation ->
                 conversationDeleteTarget = conversation
             },
+            onConversationPin = { conversation ->
+                if (!agentState.setConversationPinned(conversation.id, !conversation.isPinned)) {
+                    Toast.makeText(
+                        context,
+                        resources.getString(R.string.conversation_pin_limit),
+                        Toast.LENGTH_SHORT,
+                    ).show()
+                }
+            },
+            onBatchDelete = { conversations ->
+                conversationBatchDeleteTarget = conversations
+            },
             onOpenTools = { pushRoute(AppRoute.Tools) },
             onOpenSkills = { pushRoute(AppRoute.Skills) },
             onOpenCharacters = { pushRoute(AppRoute.Characters) },
             onOpenPermissions = { pushRoute(AppRoute.Permissions) },
             onOpenSettings = { pushRoute(AppRoute.Settings) },
+            onOpenRootSettings = { focusManager.clearFocus(); pushRoute(AppRoute.SystemEnhance) },
+            onOpenAccessibilitySettings = ::openAccessibilitySettings,
             onOpenModelProviders = { pushRoute(AppRoute.ModelProviders) },
             homeTitle = if (isHome) agentState.currentConversationTitle else null,
             homeCharacter = if (isHome) agentState.homeState.roleplayChatUi() else null,
@@ -363,6 +573,18 @@ fun AgentAppRoot(
             onOpenCharacter = {
                 agentState.homeState.roleplay?.let { pushRoute(AppRoute.CharacterDetail(it.characterId)) }
             },
+            onOpenTasks = { pushRoute(AppRoute.Tasks) },
+            onCreateCategory = { name -> agentState.createConversationCategory(name) },
+            onRenameCategory = { id, name -> agentState.renameConversationCategory(id, name) },
+            onMoveCategory = { id, delta -> agentState.moveConversationCategory(id, delta) },
+            onDeleteCategoryConfirmed = { id -> agentState.deleteConversationCategory(id) },
+            onMoveToCategory = { conversation ->
+                io.github.mangi.eta.core.AndroidAgentLogger.info("Sidebar: open move-to-category for ${conversation.id}")
+                categoryMoveTarget = conversation
+            },
+            onDropConversationToCategory = { conversation, categoryId ->
+                agentState.setConversationCategory(conversation.id, categoryId)
+            },
         ) { padding ->
             Box(
                 modifier = Modifier
@@ -372,6 +594,7 @@ fun AgentAppRoot(
                 content(padding)
             }
         }
+
     }
 
     val swipeBackDirection = if (LocalLayoutDirection.current == LayoutDirection.Rtl) {
@@ -392,12 +615,21 @@ fun AgentAppRoot(
         ) {
             entry<AppRoute.Home>(swipeDismiss = swipeDismiss) {
                 RoutedShell(route = AppRoute.Home, applyShellPadding = false) { shellPadding ->
+                    androidx.compose.runtime.CompositionLocalProvider(
+                        io.github.mangi.eta.ui.components.LocalConversationSearch provides conversationSearch,
+                        io.github.mangi.eta.ui.components.LocalConversationSearchPaging provides conversationSearchPaging,
+                    ) {
                     AgentHomeScreen(
+                        isPaused = agentState.runPaused,
                         state = agentState.homeState,
                         modelPickerState = agentState.modelPickerState,
                         isBranching = agentState.isBranchingCurrentConversation,
                         conversationKey = agentState.conversationPaneState.selectedConversationId,
                         topInset = shellPadding.calculateTopPadding(),
+                        onOpenModelProviders = { pushRoute(AppRoute.ModelProviders) },
+                        commands = agentState.agentCommands,
+                        commandResult = agentState.homeState.commandResult,
+                        commandPalette = agentState.commandPalette,
                         onAction = { action ->
                             when (action) {
                                 is AgentHomeAction.ReasoningEffortChanged ->
@@ -407,12 +639,16 @@ fun AgentAppRoot(
                                 is AgentHomeAction.HistoryViewportChanged -> agentState.updateHistoryViewport(action.atLatest)
                                 AgentHomeAction.RetryConversationLoad -> agentState.retryConversationLoad()
                                 is AgentHomeAction.ModelSelected -> agentState.selectModel(action.modelId)
+                                is AgentHomeAction.OpenConversation -> agentState.selectConversation(action.conversationKey)
                                 is AgentHomeAction.SubmitMessage -> { requestExecutionNotifications(); agentState.sendCurrentMessage(action.text) }
                                 is AgentHomeAction.InterruptAndSubmitMessage -> { requestExecutionNotifications(); agentState.interruptAndSendCurrentMessage(action.text) }
+                                is AgentHomeAction.QueueMessage -> { requestExecutionNotifications(); agentState.queueCurrentMessage(action.text) }
                                 is AgentHomeAction.SteerQueuedMessage -> { requestExecutionNotifications(); agentState.steerQueuedMessage(action.id) }
                                 is AgentHomeAction.RecallQueuedMessage -> agentState.recallQueuedMessage(action.id, action.currentDraftText)
                                 is AgentHomeAction.RemoveQueuedMessage -> agentState.removeQueuedMessage(action.id)
                                 AgentHomeAction.StopRun -> agentState.stopCurrentRun()
+                                AgentHomeAction.PauseRun -> agentState.pauseCurrentRun()
+                                AgentHomeAction.ResumeRun -> agentState.resumeCurrentRun()
                                 is AgentHomeAction.ImageAttached -> agentState.attachImage(action.uri)
                                 is AgentHomeAction.RemoveImage -> agentState.removePendingImage(action.id)
                                 is AgentHomeAction.FilesAttached -> agentState.attachFiles(action.uris)
@@ -422,6 +658,37 @@ fun AgentAppRoot(
                                     agentState.removePendingFileReference(action.id)
                                 is AgentHomeAction.EditMessage -> agentState.beginMessageEdit(action.id)
                                 AgentHomeAction.CancelMessageEdit -> agentState.cancelMessageEdit()
+                                AgentHomeAction.SearchJumpConsumed -> agentState.consumeSearchJump()
+                                AgentHomeAction.OpenConversationNavigator -> {
+                                    focusManager.clearFocus()
+                                    conversationPaneOpen = false
+                                    workspaceSheetOpen = false
+                                    conversationNavigatorOpen = true
+                                }
+                                is AgentHomeAction.AttachMessageReference ->
+                                    agentState.attachMessageReference(action.reference)
+                                is AgentHomeAction.RemoveMessageReference ->
+                                    agentState.removeMessageReference(action.messageId)
+                                is AgentHomeAction.ToggleMcpServer -> uiScope.launch {
+                                    runCatching {
+                                        val server = io.github.mangi.eta.data.repository.McpServerRepository
+                                            .serverById(action.serverId) ?: return@runCatching
+                                        io.github.mangi.eta.data.repository.McpServerRepository.update(
+                                            server.copy(enabled = action.enabled),
+                                        )
+                                        toolAccessRefresh += 1
+                                    }
+                                }
+                                is AgentHomeAction.ToggleSkill ->
+                                    appViewModel.skills.toggleSkill(action.skillId, action.enabled)
+                                AgentHomeAction.ConfirmAgentCommand -> agentState.resolveCommandConfirm(true)
+                                AgentHomeAction.DismissAgentCommandConfirm -> agentState.resolveCommandConfirm(false)
+                                is AgentHomeAction.PickPaletteEntry -> agentState.runPaletteEntry(action.entryKey)
+                                AgentHomeAction.CloseCommandPalette -> agentState.closeCommandPalette()
+                                is AgentHomeAction.ShowPaletteEntryDetail -> agentState.showPaletteEntryDetail(action.entryKey)
+                                AgentHomeAction.DismissCommandResult -> agentState.dismissCommandResult()
+                                AgentHomeAction.ResumeInterruptedRun -> agentState.resumeInterruptedRun()
+                                AgentHomeAction.DismissInterruptedRun -> agentState.dismissInterruptedRun()
                                 is AgentHomeAction.DeleteMessage -> {
                                     agentState.messageRevisionImpact(action.id)?.let { impact ->
                                         messageDeleteTarget = MessageMutationTarget(action.id, impact.laterTurnCount)
@@ -438,6 +705,7 @@ fun AgentAppRoot(
                                 is AgentHomeAction.BranchConversation ->
                                     agentState.branchConversation(action.conversationId, action.messageId)
                                 is AgentHomeAction.SelectReplyCandidate -> agentState.selectReplyCandidate(action.id, action.index)
+                                is AgentHomeAction.ForkMessage -> agentState.forkConversationFromMessage(action.id)
                                 AgentHomeAction.OpenTools -> pushRoute(AppRoute.Tools)
                                 AgentHomeAction.OpenSkills -> pushRoute(AppRoute.Skills)
                                 AgentHomeAction.OpenPermissions -> pushRoute(AppRoute.Permissions)
@@ -451,6 +719,52 @@ fun AgentAppRoot(
                         conversationLoadFailed = agentState.conversationLoadFailed,
                         historyLoadState = agentState.historyLoadState,
                         isDrawerOpen = conversationPaneOpen,
+                        toolAccess = toolAccess,
+                        onRefreshToolAccess = { toolAccessRefresh += 1 },
+                    )
+                    }
+                    ConversationNavigatorSheet(
+                        show = conversationNavigatorOpen,
+                        search = conversationSearch,
+                        history = conversationSearchPaging,
+                        historyIncomplete = agentState.homeState.hasEarlierMessages,
+                        historyLoadState = agentState.historyLoadState,
+                        historyPaused = agentState.homeState.isStreaming || agentState.homeState.messageEdit != null,
+                        loadedMessageCount = agentState.homeState.messages.size,
+                        messagesKey = agentState.homeState.messages,
+                        latestMessageId = agentState.homeState.messages.lastOrNull()?.id,
+                        onDismiss = { conversationNavigatorOpen = false },
+                        onReference = { messageId ->
+                            val attached = io.github.mangi.eta.ui.model.attachConversationReference(
+                                agentState.homeState.messages, messageId, agentState.homeState.messageStartIndex,
+                                attach = { agentState.attachMessageReference(it) },
+                            )
+                            if (attached) conversationNavigatorOpen = false
+                        },
+                        onJump = { messageId ->
+                            conversationNavigatorOpen = false
+                            agentState.jumpToMessage(messageId)
+                        },
+                        entriesFor = { query -> agentState.conversationNavEntries(query) },
+                    )
+                }
+            }
+            entry<AppRoute.ConversationBranches>(swipeDismiss = swipeDismiss) {
+                RoutedShell(route = AppRoute.ConversationBranches) {
+                    var branchNodes by remember { mutableStateOf<List<BranchNodeUi>>(emptyList()) }
+                    var branchLoading by remember { mutableStateOf(true) }
+                    LaunchedEffect(Unit) {
+                        branchNodes = agentState.loadBranchNodes()
+                        branchLoading = false
+                    }
+                    ConversationBranchScreen(
+                        nodes = branchNodes,
+                        currentConversationId = agentState.homeConversationId,
+                        loading = branchLoading,
+                        onOpenConversation = { conversationId ->
+                            agentState.selectConversation(conversationId)
+                            navigator.popToHome()
+                        },
                     )
                 }
             }
@@ -473,7 +787,9 @@ fun AgentAppRoot(
                 }
             }
             entry<AppRoute.Tools>(swipeDismiss = swipeDismiss) {
-                AgentToolsScreen(
+                io.github.mangi.eta.ui.screens.tools.ToolManagementScreen(
+                    onBack = ::popRoute,
+                    onManageGroups = { pushRoute(AppRoute.PromptToolGroups) },
                     state = toolsState,
                     onAction = { action ->
                         when (action) {
@@ -572,6 +888,7 @@ fun AgentAppRoot(
                             is PermissionHealthAction.OpenItemAction -> {
                                 when (action.itemId) {
                                     LOCAL_NETWORK_PERMISSION_ITEM_ID -> requestLocalNetworkPermission()
+                                    "bluetooth" -> requestBluetoothPermission()
                                     "calendar" -> locationPermissionLauncher.launch(io.github.mangi.eta.agent.device.CalendarPermissions.requested)
                                     "notification_policy" -> context.startActivity(Intent(Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS))
                                     "accessibility" -> {
@@ -580,14 +897,7 @@ fun AgentAppRoot(
                                         }
                                     }
                                     "overlay" -> {
-                                        runCatching {
-                                            context.startActivity(
-                                                Intent(
-                                                    Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                                                    Uri.parse("package:${context.packageName}")
-                                                )
-                                            )
-                                        }
+                                        io.github.mangi.eta.ui.navigation.OverlayPermissionNavigation.open(context)
                                     }
                                     "background" -> {
                                         if (RootAccess.isGranted && Build.MANUFACTURER.lowercase() in setOf("oppo", "realme", "oneplus")) {
@@ -704,6 +1014,142 @@ fun AgentAppRoot(
                     onBack = ::popRoute
                 )
             }
+            entry<AppRoute.ConversationCategories>(swipeDismiss = swipeDismiss) {
+                io.github.mangi.eta.ui.screens.conversations.ConversationCategoriesScreen(
+                    categories = agentState.conversationCategories,
+                    conversationCategoryIds = agentState.conversationCategoryIds,
+                    conversations = agentState.conversationPaneState.conversations,
+                    onBack = ::popRoute,
+                    onCreate = { name -> agentState.createConversationCategory(name) },
+                    onRename = { id, name -> agentState.renameConversationCategory(id, name) },
+                    onDelete = { id -> agentState.deleteConversationCategory(id) },
+                    onMove = { id, delta -> agentState.moveConversationCategory(id, delta) },
+                    onOpenConversation = { id ->
+                        agentState.selectConversation(id)
+                        popRoute()
+                    },
+                )
+            }
+
+            entry<AppRoute.Tasks>(swipeDismiss = swipeDismiss) {
+                AgentTasksScreen(onBack = { popRoute() })
+            }
+
+            entry<AppRoute.TokenUsage>(swipeDismiss = swipeDismiss) {
+                TokenUsageScreen(onBack = { popRoute() })
+            }
+
+            entry<AppRoute.DataUsage>(swipeDismiss = swipeDismiss) {
+                DataUsageScreen(onBack = { popRoute() })
+            }
+            entry<AppRoute.SelfCheck>(swipeDismiss = swipeDismiss) {
+                io.github.mangi.eta.ui.screens.selfcheck.FeatureSelfCheckScreen(onBack = { popRoute() })
+            }
+            entry<AppRoute.Support>(swipeDismiss = swipeDismiss) {
+                io.github.mangi.eta.ui.screens.support.SupportScreen(onBack = { popRoute() })
+            }
+            entry<AppRoute.DiagnosticsPatrol>(swipeDismiss = swipeDismiss) {
+                io.github.mangi.eta.ui.screens.selfcheck.DiagnosticsPatrolScreen(onBack = { popRoute() })
+            }
+            entry<AppRoute.DiagnosticsCenter>(swipeDismiss = swipeDismiss) {
+                io.github.mangi.eta.ui.screens.diagnostics.DiagnosticsCenterScreen(
+                    onBack = ::popRoute,
+                    onNavigate = { route -> pushRoute(route) },
+                )
+            }
+
+            entry<AppRoute.PromptStudio>(swipeDismiss = swipeDismiss) {
+                io.github.mangi.eta.ui.screens.prompts.PromptStudioScreen(
+                    onBack = ::popRoute,
+                    onNavigate = { route -> pushRoute(route) },
+                )
+            }
+
+            entry<AppRoute.PromptEditor>(swipeDismiss = swipeDismiss) {
+                io.github.mangi.eta.ui.screens.prompts.PromptEditorScreen(
+                    onBack = ::popRoute,
+                    onOpenNewPreset = { pushRoute(AppRoute.PromptPresetEditor(null)) },
+                    onManageGroups = { pushRoute(AppRoute.PromptToolGroups) },
+                )
+            }
+
+            entry<AppRoute.PromptVersions>(swipeDismiss = swipeDismiss) {
+                io.github.mangi.eta.ui.screens.prompts.PromptVersionsScreen(onBack = ::popRoute)
+            }
+
+            entry<AppRoute.PromptTools>(swipeDismiss = swipeDismiss) {
+                io.github.mangi.eta.ui.screens.tools.ToolManagementScreen(state = toolsState,
+                    initialPolicy = true, onBack = ::popRoute,
+                    onManageGroups = { pushRoute(AppRoute.PromptToolGroups) },
+                    onAction = { action -> when (action) {
+                        AgentToolsAction.NavigateBack -> popRoute()
+                        AgentToolsAction.OpenBrowser -> openConversationBrowser()
+                        AgentToolsAction.OpenWebToolsSettings -> pushRoute(AppRoute.WebToolsSettings)
+                        AgentToolsAction.OpenEnhancements -> pushRoute(AppRoute.SystemEnhance)
+                        AgentToolsAction.OpenPermissions -> pushRoute(AppRoute.Permissions)
+                    } })
+            }
+
+            entry<AppRoute.PromptPresets>(swipeDismiss = swipeDismiss) {
+                io.github.mangi.eta.ui.screens.prompts.PromptPresetsScreen(
+                    onBack = ::popRoute,
+                    onEditPreset = { name -> pushRoute(AppRoute.PromptPresetEditor(name)) },
+                )
+            }
+
+            entry<AppRoute.PromptPresetEditor>(swipeDismiss = swipeDismiss) { route ->
+                io.github.mangi.eta.ui.screens.prompts.PromptEditorScreen(
+                    onBack = ::popRoute,
+                    presetMode = true,
+                    presetName = route.name,
+                    onManageGroups = { pushRoute(AppRoute.PromptToolGroups) },
+                )
+            }
+
+            entry<AppRoute.PromptSnapshots>(swipeDismiss = swipeDismiss) {
+                io.github.mangi.eta.ui.screens.prompts.PromptSnapshotsScreen(
+                    onBack = ::popRoute,
+                    onOpen = { fileName -> pushRoute(AppRoute.PromptSnapshotDetail(fileName)) },
+                )
+            }
+
+            entry<AppRoute.PromptSnapshotDetail>(swipeDismiss = swipeDismiss) { route ->
+                io.github.mangi.eta.ui.screens.prompts.PromptSnapshotDetailScreen(
+                    fileName = route.fileName,
+                    onBack = ::popRoute,
+                )
+            }
+
+            entry<AppRoute.PromptEffective>(swipeDismiss = swipeDismiss) {
+                io.github.mangi.eta.ui.screens.prompts.PromptEffectiveScreen(
+                    onBack = ::popRoute,
+                    onOpenSegment = { index -> pushRoute(AppRoute.PromptEffectiveItem(index)) },
+                )
+            }
+            entry<AppRoute.PromptEffectiveItem>(swipeDismiss = swipeDismiss) { route ->
+                io.github.mangi.eta.ui.screens.prompts.PromptEffectiveItemScreen(
+                    segment = route.segment,
+                    onBack = ::popRoute,
+                )
+            }
+            entry<AppRoute.PromptToolGroups>(swipeDismiss = swipeDismiss) {
+                io.github.mangi.eta.ui.screens.prompts.PromptToolGroupsScreen(onBack = ::popRoute)
+            }
+            entry<AppRoute.PromptIntegrity>(swipeDismiss = swipeDismiss) {
+                io.github.mangi.eta.ui.screens.prompts.PromptIntegrityScreen(onBack = ::popRoute)
+            }
+            entry<AppRoute.BackgroundCanvas>(swipeDismiss = swipeDismiss) {
+                io.github.mangi.eta.ui.BackgroundCanvasSettingsScreen(
+                    onBack = ::popRoute,
+                    onNavigate = { route -> pushRoute(route) },
+                )
+            }
+            entry<AppRoute.NotificationDisplaySettings>(swipeDismiss = swipeDismiss) {
+                io.github.mangi.eta.ui.NotificationDisplaySettingsScreen(onBack = ::popRoute)
+            }
+            entry<AppRoute.VirtualScreen>(swipeDismiss = swipeDismiss) {
+                io.github.mangi.eta.ui.screens.tasks.VirtualScreenSettingsScreen(onBack = { popRoute() })
+            }
             entry<AppRoute.SpeechSettings>(swipeDismiss = swipeDismiss) {
                 SpeechSettingsScreen(
                     onBack = ::popRoute,
@@ -743,10 +1189,28 @@ fun AgentAppRoot(
                         when (action) {
                             AgentMemoryAction.NavigateBack -> popRoute()
                             is AgentMemoryAction.ToggleEnabled -> memory.setMemoryEnabled(action.enabled)
+                            is AgentMemoryAction.ToggleAutoMemory -> memory.setAutomaticReview(memory = action.enabled)
+                            is AgentMemoryAction.ToggleAutoSkills -> memory.setAutomaticReview(skills = action.enabled)
+                            is AgentMemoryAction.ToggleAutoCompact -> memory.setMemoryAutoCompact(action.enabled)
                             is AgentMemoryAction.DraftChanged -> memory.updateMemoryDraft(action.content)
                             AgentMemoryAction.Save -> memory.saveMemory()
                             AgentMemoryAction.Clear -> memory.clearMemory()
                             AgentMemoryAction.DismissNotice -> memory.dismissMemoryNotice()
+                        }
+                    },
+                    onOpenDocument = { pushRoute(AppRoute.MemoryDocument) },
+                )
+            }
+            entry<AppRoute.MemoryDocument>(swipeDismiss = swipeDismiss) {
+                io.github.mangi.eta.ui.screens.memory.MemoryDocumentScreen(
+                    state = memory.memoryState,
+                    onAction = { action ->
+                        when (action) {
+                            is AgentMemoryAction.DraftChanged -> memory.updateMemoryDraft(action.content)
+                            AgentMemoryAction.Save -> memory.saveMemory()
+                            AgentMemoryAction.Clear -> memory.clearMemory()
+                            AgentMemoryAction.NavigateBack -> popRoute()
+                            else -> Unit
                         }
                     },
                 )
@@ -792,6 +1256,9 @@ fun AgentAppRoot(
                     onBack = ::popRoute,
                 )
             }
+            entry<AppRoute.GitHubAccount>(swipeDismiss = swipeDismiss) {
+                GitHubAccountScreen(onBack = ::popRoute)
+            }
             entry<AppRoute.McpServers>(swipeDismiss = swipeDismiss) {
                 McpServersScreen(
                     onNavigate = { route -> pushRoute(route) },
@@ -819,6 +1286,7 @@ fun AgentAppRoot(
         }
     }
 
+
     characterStore.notice?.let { notice ->
         when (LocalUiStyle.current) {
             AppearanceUiStyle.COUI -> {
@@ -845,6 +1313,43 @@ fun AgentAppRoot(
             }
         }
     }
+
+    // 工作区 Markdown 预览：在页面层弹出，OverlayBottomSheet 才能自带跟手与返回同步退场。
+    workspaceMarkdown?.let { (path, original) ->
+        io.github.mangi.eta.ui.markdown.MarkdownFileDialog(
+            path = path,
+            original = original,
+            onDismiss = { workspaceMarkdown = null },
+            readDisk = { relative -> io.github.mangi.eta.ui.app.readWorkspaceText(workspaceStore, relative) },
+            editRealPath = {
+                java.io.File(io.github.mangi.eta.agent.terminal.TerminalRuntime.ROOT_WORKSPACE_PATH, path)
+                    .absolutePath
+            },
+            // 工作区浏览器本身是 sheet，这里用 Dialog 卡片；会话里的卡片保持原来的底部弹层。
+            useBottomSheet = false,
+        )
+    }
+
+    // 底部弹层必须始终在 composition 里（由 show 控制显隐），条件式调用会挂不上窗口导致点了没反应。
+    io.github.mangi.eta.ui.components.ConversationMoveCategorySheet(
+        conversationTitle = categoryMoveTarget?.title,
+        categories = agentState.conversationCategories,
+        currentCategoryId = categoryMoveTarget?.let { agentState.conversationCategoryOf(it.id) },
+        onPick = { categoryId ->
+            categoryMoveTarget?.let { target -> agentState.setConversationCategory(target.id, categoryId) }
+            categoryMoveTarget = null
+        },
+        onCreateAndPick = { name ->
+            val target = categoryMoveTarget
+            categoryMoveTarget = null
+            target?.let { conversation ->
+                agentState.createConversationCategory(name)?.let { newId ->
+                    agentState.setConversationCategory(conversation.id, newId)
+                }
+            }
+        },
+        onDismiss = { categoryMoveTarget = null },
+    )
 
     conversationRenameTarget?.let { conversation ->
         var renameInput by remember(conversation.id) { mutableStateOf(conversation.title) }
@@ -938,6 +1443,32 @@ fun AgentAppRoot(
                     )
                 }
             }
+        }
+    }
+
+    conversationBatchDeleteTarget?.let { conversations ->
+        WindowDialog(
+            show = true,
+            cornerRadius = DialogDefaults.CornerRadius,
+            title = stringResource(R.string.conversation_delete_title),
+            summary = pluralStringResource(
+                R.plurals.conversation_batch_delete_message,
+                conversations.size,
+                conversations.size,
+            ),
+            onDismissRequest = { conversationBatchDeleteTarget = null },
+        ) {
+            MiuixDialogActions(
+                confirmText = stringResource(R.string.action_delete),
+                destructive = true,
+                onCancel = { conversationBatchDeleteTarget = null },
+                onConfirm = {
+                    conversations.forEach { conversation ->
+                        agentState.deleteConversation(conversation.id)
+                    }
+                    conversationBatchDeleteTarget = null
+                },
+            )
         }
     }
 

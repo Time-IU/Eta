@@ -20,7 +20,15 @@ internal object ProviderAuthModes {
     const val OPENAI_CHATGPT = "openai_chatgpt"
     const val XAI_GROK = "xai_grok"
 
+    /**
+     * 借用厂商助手（当前实现为小布）自身的模型：不走 HTTP，
+     * 经 Eta 模块 hook 把提问投进助手，再把回答旁路回来。
+     */
+    const val BREENO_TAP = "breeno_tap"
+
     fun isOAuth(mode: String): Boolean = mode == OPENAI_CHATGPT || mode == XAI_GROK
+
+    fun isBorrowedVendor(mode: String): Boolean = mode == BREENO_TAP
 }
 
 internal object ProviderSourceTypes {
@@ -37,6 +45,10 @@ internal object ProviderSourceTypes {
     const val STEPFUN = "stepfun"
     const val SILICONFLOW = "siliconflow"
     const val OPENROUTER = "openrouter"
+    const val ZHIPU = "zhipu"
+    const val VOLCENGINE = "volcengine"
+    const val QIANFAN = "qianfan"
+    const val HUNYUAN = "hunyuan"
 }
 
 @Serializable
@@ -213,6 +225,18 @@ internal fun List<ProviderSetting>.enabledModel(modelId: String?): ProviderModel
     for (provider in this) {
         if (!provider.isEnabled) continue
         provider.models.firstOrNull { it.id == modelId && it.isEnabled }?.let { return ProviderModel(provider, it) }
+    }
+    return null
+}
+
+/** 按【对外 modelId】查找（如 cn:hy3）：授权与配置里一律用对外 id，避免内部 UUID 失效。 */
+internal fun List<ProviderSetting>.enabledModelByApiId(apiId: String?): ProviderModel? {
+    apiId ?: return null
+    for (provider in this) {
+        if (!provider.isEnabled) continue
+        provider.models.firstOrNull { it.isEnabled && it.modelId == apiId }?.let {
+            return ProviderModel(provider, it)
+        }
     }
     return null
 }
