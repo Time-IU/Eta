@@ -1,6 +1,6 @@
 # Eta 3.4.4 · Time-IU 个人定制 fork
 
-这是 [Time-IU/Eta](https://github.com/Time-IU/Eta) 的非官方个人 fork，基于 [Mangi-11/Eta](https://github.com/Mangi-11/Eta) 的 `v3.4.4`，基线提交 `83a25e71eed1e5d8dadbd330362e3999b46595d9`。不是“官方加强版”或“破解版”，不代表上游作者认可或背书。
+这是 [Time-IU/Eta](https://github.com/Time-IU/Eta) 的非官方个人 fork，基于 [Mangi-11/Eta](https://github.com/Mangi-11/Eta) 的 `v3.4.4`，最初基线提交 `83a25e71eed1e5d8dadbd330362e3999b46595d9`；custom.5 已同步至上游 `0b70953453b173405a4d9dcfad54be78cf3aec70`。不是“官方加强版”或“破解版”，不代表上游作者认可或背书。
 
 维护主体为 Time-IU；代码整合、修改和文档整理使用了 AI 辅助。Eta 的 Agent Runtime、长期记忆、Skills、工具体系及上游已有语音能力属于上游工作，不列作本 fork 原创。
 
@@ -14,7 +14,7 @@
 - [3.4.4 定制变更与验证边界](CHANGELOG-3.4.4.md)
 - [源码路径映射与维护入口](MODIFICATIONS.md)
 - [构建说明](../../BUILD.md) · [第三方组件说明](../../THIRD_PARTY.md)
-- [上游中文介绍](../../README.md) · [Upstream English introduction](../../README_EN.md)
+- [本分支中文简介](../../README.md) · [Custom fork overview](../../README_EN.md) · [上游文档](https://github.com/Mangi-11/Eta)
 
 ## 这次主要改什么
 
