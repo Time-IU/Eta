@@ -43,7 +43,6 @@
 
 - [定制说明](docs/custom/README.md) · [构建](BUILD.md) · [源码路径](docs/custom/MODIFICATIONS.md) · [第三方组件与模型许可](THIRD_PARTY.md)
 - 上游基础功能请直接阅读 [Eta 上游文档](https://github.com/Mangi-11/Eta)，这里不复制其完整说明。
-- README 的差异化组织参考 [Oo0520/Eta-por](https://github.com/Oo0520/Eta-por)，**不表示本仓库已合入该分支**；其功能清单、许可证与分发政策不直接套用到这里。
 - 本分支由 Time-IU 维护，使用 AI 辅助修改；感谢 Mangi-11 及上游、第三方贡献者。主项目保留 [GPL-3.0 许可原文](LICENSE)与版权声明，第三方组件和模型各遵循自身许可。不代表上游认可或背书。
 
-本次首页整理只更新文档与示意图，不发布本机 `integration-por` 测试包、不改已有 Release／标签，也不改变其尚待核清的许可与分发边界。
+发布状态、重点更新、对应源码及安装包校验和以 [Releases](https://github.com/Time-IU/Eta/releases) 中实际公开的版本为准；未列入 Release 的本机测试构建不代表已公开发布。

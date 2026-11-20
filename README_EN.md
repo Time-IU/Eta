@@ -43,8 +43,8 @@ Kimi Code/Web integration and legacy Gemini system enhancements are removed; ord
 
 [Custom documentation](docs/custom/README.md) · [Build](BUILD.md) · [Source map](docs/custom/MODIFICATIONS.md) · [Third-party licenses](THIRD_PARTY.md)
 
-Read the [upstream documentation](https://github.com/Mangi-11/Eta) for shared functionality. This README's difference-first organization references [Oo0520/Eta-por](https://github.com/Oo0520/Eta-por); that does not mean its code, feature list, license or distribution policy applies to this repository.
+Read the [upstream documentation](https://github.com/Mangi-11/Eta) for shared functionality.
 
 Maintained by Time-IU with AI assistance. Thanks to Mangi-11 and upstream/third-party contributors. The existing [GPL-3.0 license text](LICENSE) and copyright notices are retained; components and models have their own licenses. This fork is not endorsed by upstream.
 
-This refresh changes documentation and illustrations only. It does not publish local `integration-por` builds, modify existing Releases/tags, or resolve that integration's outstanding licensing/distribution questions.
+Published versions, key changes, corresponding source and APK checksums are listed in [Releases](https://github.com/Time-IU/Eta/releases). Local test builds not listed there should not be treated as public releases.
