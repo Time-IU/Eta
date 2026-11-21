@@ -42,3 +42,7 @@ internal fun toolCardAction(id: String, capabilities: AgentToolCapabilities): Ag
         else -> AgentToolsAction.OpenPermissions
     }
 }
+
+/** Equality of visible tool identities, independent of current enable switches or titles. */
+internal fun toolScopeDiffers(current: List<ToolGroupUi>, all: List<ToolGroupUi>): Boolean =
+    current.flatMap { it.tools }.map { it.id }.toSet() != all.flatMap { it.tools }.map { it.id }.toSet()

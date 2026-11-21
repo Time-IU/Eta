@@ -21,10 +21,11 @@ import com.itos.coui.theme.CouiTheme
 import io.github.mangi.eta.R
 import io.github.mangi.eta.data.model.AppearanceUiStyle
 import io.github.mangi.eta.ui.app.LocalUiStyle
+import io.github.mangi.eta.ui.components.glass.liquidGlassSurface
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 
-/** Shared opaque, rounded composer surface; bounded body and an independent close footer. */
+/** Shared glass/solid surface; bounded body and an independent close footer. */
 @Composable
 internal fun ComposerPanelDialog(
     show: Boolean,
@@ -34,6 +35,10 @@ internal fun ComposerPanelDialog(
     content: @Composable ColumnScope.() -> Unit,
 ) {
     if (!show) return
+    if (LocalUiStyle.current == AppearanceUiStyle.COUI) {
+        CouiComposerPanel(title, onDismiss, content)
+        return
+    }
     val height = with(LocalDensity.current) { LocalWindowInfo.current.containerSize.height.toDp() }
     val surface = if (LocalUiStyle.current == AppearanceUiStyle.COUI) {
         if (CouiTheme.isDark) Color(0xFF24262B) else Color(0xFFF4F4F7)
@@ -45,7 +50,7 @@ internal fun ComposerPanelDialog(
             Modifier.padding(horizontal = 16.dp, vertical = 16.dp)
                 .widthIn(max = 560.dp).fillMaxWidth()
                 .heightIn(max = (height - 48.dp).coerceAtLeast(1.dp))
-                .clip(RoundedCornerShape(24.dp)).background(surface),
+                .liquidGlassSurface(RoundedCornerShape(24.dp), independentWindow = true, fallbackColor = surface),
         ) {
             if (title != null) {
                 Text(title, modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 14.dp),

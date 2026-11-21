@@ -1,0 +1,4 @@
+<resources>
+    <string name="appearance_liquid_glass">Liquid Glass (preview)</string>
+    <string name="appearance_liquid_glass_summary">Glass composer and panels. Turn off to restore solid surfaces; disabled when blur is off.</string>
+</resources>

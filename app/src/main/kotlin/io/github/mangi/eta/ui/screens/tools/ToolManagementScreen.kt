@@ -54,7 +54,7 @@ internal fun ToolManagementScreen(state: AgentToolsUiState, onAction: (AgentTool
                 message = stringResource(R.string.compact_tools_policy_summary),
                 confirmText = stringResource(R.string.compact_tools_discard),
                 onConfirm = confirm, onDismissRequest = { discard = false })
-        } else top.yukonga.miuix.kmp.window.WindowDialog(show = true,
+        } else io.github.mangi.eta.ui.components.EtaWindowDialog(show = true,
             title = stringResource(R.string.compact_tools_unsaved), onDismissRequest = { discard = false }) {
             MiuixDialogActions(confirmText = stringResource(R.string.compact_tools_discard),
                 onCancel = { discard = false }, onConfirm = confirm)

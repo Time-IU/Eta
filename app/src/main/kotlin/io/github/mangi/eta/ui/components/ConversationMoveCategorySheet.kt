@@ -41,7 +41,7 @@ import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.basic.TextButton
 import top.yukonga.miuix.kmp.basic.TextField
 import top.yukonga.miuix.kmp.layout.DialogDefaults
-import top.yukonga.miuix.kmp.window.WindowDialog
+import io.github.mangi.eta.ui.components.EtaWindowDialog as WindowDialog
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 
 /** 分类色条：按顺序取色，和侧栏分类标题的竖条同一套视觉语言。 */

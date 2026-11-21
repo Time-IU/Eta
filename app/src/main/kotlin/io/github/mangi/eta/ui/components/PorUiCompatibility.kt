@@ -178,7 +178,7 @@ internal fun EtaCard(
                 onClick = { onClick?.invoke() })
         } else Modifier
         Column(
-            modifier = modifier.clip(RoundedCornerShape(24.dp))
+            modifier = modifier.clip(com.itos.coui.shape.CouiShape(24.dp, 3f))
                 .background(CouiPageDefaults.themeColors().card)
                 .then(interaction).padding(insideMargin),
             content = content,
@@ -252,6 +252,7 @@ internal fun EtaWindowDialog(
     modifier: Modifier = Modifier,
     onDismissRequest: (() -> Unit)? = null,
     onDismissFinished: (() -> Unit)? = null,
+    cornerRadius: Dp = 24.dp,
     content: @Composable () -> Unit,
 ) {
     if (LocalUiStyle.current == AppearanceUiStyle.COUI) {
@@ -288,7 +289,7 @@ internal fun EtaWindowDialog(
     } else {
         WindowDialog(show = show, title = title, summary = summary,
             modifier = modifier, onDismissRequest = onDismissRequest,
-            onDismissFinished = onDismissFinished) {
+            onDismissFinished = onDismissFinished, cornerRadius = cornerRadius) {
             PorDialogContent(content)
         }
     }
@@ -302,14 +303,16 @@ internal fun EtaOverlayDialog(
     modifier: Modifier = Modifier,
     onDismissRequest: (() -> Unit)? = null,
     onDismissFinished: (() -> Unit)? = null,
+    cornerRadius: Dp = 24.dp,
     content: @Composable () -> Unit,
 ) {
     if (LocalUiStyle.current == AppearanceUiStyle.COUI) {
-        EtaWindowDialog(show, title, summary, modifier, onDismissRequest, onDismissFinished, content)
+        EtaWindowDialog(show, title, summary, modifier, onDismissRequest, onDismissFinished,
+            cornerRadius = cornerRadius, content = content)
     } else {
         OverlayDialog(show = show, title = title, summary = summary,
             modifier = modifier, onDismissRequest = onDismissRequest,
-            onDismissFinished = onDismissFinished) {
+            onDismissFinished = onDismissFinished, cornerRadius = cornerRadius) {
             PorDialogContent(content)
         }
     }

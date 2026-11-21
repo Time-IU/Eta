@@ -647,7 +647,10 @@ internal fun <T : Any> CouiSegmentedTabs(
 @Composable
 internal fun rememberCouiDialogMaterial(dark: Boolean = CouiTheme.isDark): CouiDialogMaterial? {
     val backdrop = rememberCouiWindowBackdrop()
-    return if (CouiDialogDefaults.isMaterialSupported() && backdrop != null) {
+    return if (io.github.mangi.eta.ui.app.LocalBlurEnabled.current &&
+        io.github.mangi.eta.ui.app.LocalLiquidGlassAllowed.current &&
+        androidx.compose.ui.platform.LocalView.current.isHardwareAccelerated &&
+        CouiDialogDefaults.isMaterialSupported() && backdrop != null) {
         CouiDialogDefaults.material(dark)
     } else {
         null

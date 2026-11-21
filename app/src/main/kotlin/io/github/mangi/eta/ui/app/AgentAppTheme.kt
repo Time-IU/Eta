@@ -49,11 +49,7 @@ fun AgentAppTheme(
     val context = LocalContext.current
     val configuration = LocalConfiguration.current
     val systemDark = isSystemInDarkTheme()
-    val isDark = when (appearance.themeMode) {
-        AppearanceThemeMode.SYSTEM -> systemDark
-        AppearanceThemeMode.LIGHT -> false
-        AppearanceThemeMode.DARK -> true
-    }
+    val isDark = appearance.themeMode.resolveDark(systemDark)
     val colorSchemeMode = when {
         !appearance.monetEnabled && appearance.themeMode == AppearanceThemeMode.LIGHT -> ColorSchemeMode.Light
         !appearance.monetEnabled && appearance.themeMode == AppearanceThemeMode.DARK -> ColorSchemeMode.Dark
@@ -132,7 +128,14 @@ fun AgentAppTheme(
 
     val currentContent by rememberUpdatedState(content)
     // 切换 UI 样式时移动同一内容树，保留导航栈、页面草稿与正在运行的任务状态。
-    val scopedContent = remember { movableContentOf { currentContent() } }
+    val scopedContent = remember { movableContentOf {
+        // System overlays intentionally retain their existing no-shader, transparent path.
+        if (applyInterfaceScale) {
+            io.github.mangi.eta.ui.components.glass.LiquidGlassScene { currentContent() }
+        } else {
+            currentContent()
+        }
+    } }
 
     MiuixTheme(controller = controller) {
         val baseMiuixColors = MiuixTheme.colorScheme
@@ -179,11 +182,8 @@ fun AgentAppTheme(
         }
 
         val blurSupported = isRuntimeShaderSupported()
-        val effectiveBlur = if (appearance.uiStyle == AppearanceUiStyle.COUI) {
-            blurSupported
-        } else {
-            appearance.blurEnabled && blurSupported
-        }
+        // One user preference and host safety gate for all COUI pages, menus and dialogs.
+        val effectiveBlur = unifiedEffectsEnabled(appearance.blurEnabled, blurSupported, applyInterfaceScale)
 
         MiuixTheme(colors = themedMiuixColors) {
             CompositionLocalProvider(
@@ -192,6 +192,8 @@ fun AgentAppTheme(
                 LocalCouiContourGlowEnabled provides effectiveBlur,
                 LocalAppearanceSettings provides appearance,
                 LocalUiStyle provides appearance.uiStyle,
+                LocalResolvedDarkTheme provides isDark,
+                LocalLiquidGlassAllowed provides applyInterfaceScale,
                 LocalBlurEnabled provides effectiveBlur,
                 LocalTopBarBlurStyle provides appearance.topBarBlurStyle,
                 LocalPlatformDensity provides platformDensity,

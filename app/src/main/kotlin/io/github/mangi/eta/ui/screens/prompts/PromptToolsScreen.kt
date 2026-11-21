@@ -152,7 +152,7 @@ private fun ToolDirectoryPage(
     managementHeader: @Composable () -> Unit,
 ) {
     MiuixScaffoldPage(
-        title = stringResource(R.string.prompt_studio_tools_title),
+        title = stringResource(R.string.compact_tools_title),
         onBack = onBack,
         modifier = Modifier.imePadding(),
     ) {

@@ -56,7 +56,7 @@ import top.yukonga.miuix.kmp.blur.isRuntimeShaderSupported
 import top.yukonga.miuix.kmp.preference.OverlayDropdownPreference
 import top.yukonga.miuix.kmp.preference.SliderPreference
 import top.yukonga.miuix.kmp.preference.SwitchPreference
-import top.yukonga.miuix.kmp.window.WindowDialog
+import io.github.mangi.eta.ui.components.EtaWindowDialog as WindowDialog
 
 @Composable
 internal fun AppearanceSettingsScreen(onBack: () -> Unit) {
@@ -163,6 +163,13 @@ internal fun AppearanceSettingsScreen(onBack: () -> Unit) {
 
                 Group(title = stringResource(R.string.appearance_group_interface)) {
                     CouiSwitchPreference(
+                        title = stringResource(R.string.appearance_liquid_glass),
+                        summary = stringResource(R.string.appearance_liquid_glass_summary),
+                        checked = appearance.liquidGlassEnabled,
+                        onCheckedChange = { enabled -> update { it.copy(liquidGlassEnabled = enabled) } },
+                    )
+                    Divider()
+                    CouiSwitchPreference(
                         title = stringResource(R.string.appearance_swipe_dismiss),
                         summary = stringResource(R.string.appearance_swipe_dismiss_summary),
                         checked = appearance.swipeDismissEnabled,
@@ -249,6 +256,12 @@ internal fun AppearanceSettingsScreen(onBack: () -> Unit) {
                                     update { current -> current.copy(themeMode = mode) }
                                 }
                             },
+                        )
+                        SwitchPreference(
+                            title = stringResource(R.string.appearance_liquid_glass),
+                            summary = stringResource(R.string.appearance_liquid_glass_summary),
+                            checked = appearance.liquidGlassEnabled,
+                            onCheckedChange = { enabled -> update { it.copy(liquidGlassEnabled = enabled) } },
                         )
                         SwitchPreference(
                             title = stringResource(R.string.appearance_monet),

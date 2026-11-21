@@ -1,0 +1,5 @@
+Kyant0/AndroidLiquidGlass (Backdrop)
+https://github.com/Kyant0/AndroidLiquidGlass
+Inspected commit: eb4a0ea2e17542ea28c2e71088f7dd9acf77aad5
+Runtime: io.github.kyant0:backdrop-android:2.0.1
+Apache-2.0. Host adapter is separately authored. Decorative backdrop is not the actual conversation or wallpaper.

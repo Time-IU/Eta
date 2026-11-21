@@ -113,6 +113,22 @@ internal fun EtaPreferenceRow(
     titleContent: (@Composable ColumnScope.() -> Unit)? = null,
     endActions: (@Composable RowScope.() -> Unit)? = null,
 ) {
+    if (io.github.mangi.eta.ui.app.LocalUiStyle.current == io.github.mangi.eta.data.model.AppearanceUiStyle.COUI &&
+        titleContent == null && title != null) {
+        Column(modifier.fillMaxWidth().then(interaction)) {
+            io.github.mangi.eta.ui.components.coui.CouiPreferenceRow(
+                modifier = Modifier.fillMaxWidth(), title = title, summary = summary,
+                enabled = enabled, icon = startAction,
+                titleColor = if (enabled) titleColor.color else titleColor.disabledColor,
+                summaryColor = if (enabled) summaryColor.color else summaryColor.disabledColor,
+                trailing = { endActions?.let { Row(verticalAlignment = Alignment.CenterVertically, content = it) } },
+            )
+            bottomAction?.let { action ->
+                Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp).padding(bottom = 12.dp)) { action() }
+            }
+        }
+        return
+    }
     val colors = MiuixTheme.colorScheme
     Column(
         modifier = modifier.fillMaxWidth()

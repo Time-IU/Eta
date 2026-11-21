@@ -13,6 +13,10 @@ import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import io.github.mangi.eta.data.model.AppearanceUiStyle
+import io.github.mangi.eta.ui.app.LocalUiStyle
+import io.github.mangi.eta.ui.components.coui.CouiLazyScaffoldPage
+import io.github.mangi.eta.ui.components.coui.CouiScaffold
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -40,6 +44,12 @@ fun MiuixScaffoldPage(
     compactTitle: Boolean = false,
     content: LazyListScope.() -> Unit,
 ) {
+    if (LocalUiStyle.current == AppearanceUiStyle.COUI) {
+        CouiLazyScaffoldPage(title = title, onBack = onBack, modifier = modifier,
+            actions = actions, overlay = overlay, listState = listState,
+            compactTitle = compactTitle, content = content)
+        return
+    }
     val scrollBehavior = MiuixScrollBehavior()
     val backdrop = rememberTopBarBackdrop()
     val topBarColor = topBarContainerColor(backdrop)
@@ -112,6 +122,14 @@ fun MiuixScaffold(
         sidePadding: Dp,
     ) -> Unit,
 ) {
+    if (LocalUiStyle.current == AppearanceUiStyle.COUI) {
+        val legacyScroll = MiuixScrollBehavior()
+        CouiScaffold(title = title, onBack = onBack, modifier = modifier, actions = actions) {
+                contentPadding, _, _, sidePadding ->
+            content(contentPadding, legacyScroll, sidePadding)
+        }
+        return
+    }
     val scrollBehavior = MiuixScrollBehavior()
     val backdrop = rememberTopBarBackdrop()
     val topBarColor = topBarContainerColor(backdrop)

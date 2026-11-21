@@ -15,6 +15,7 @@ data class AppearanceSettings(
     val accentColor: AppearanceAccentColor = AppearanceAccentColor.SYSTEM,
     val pureBlackEnabled: Boolean = false,
     val blurEnabled: Boolean = true,
+    val liquidGlassEnabled: Boolean = true,
     val topBarBlurStyle: AppearanceTopBarBlurStyle = AppearanceTopBarBlurStyle.GAUSSIAN,
     val swipeDismissEnabled: Boolean = true,
     val predictiveBackEnabled: Boolean = true,
@@ -44,6 +45,12 @@ enum class AppearanceThemeMode(val persistedValue: String) {
     SYSTEM("system"),
     LIGHT("light"),
     DARK("dark");
+
+    fun resolveDark(systemDark: Boolean): Boolean = when (this) {
+        SYSTEM -> systemDark
+        LIGHT -> false
+        DARK -> true
+    }
 
     companion object {
         fun fromPersistedValue(value: String?): AppearanceThemeMode =

@@ -59,6 +59,7 @@ import io.github.mangi.eta.ui.model.AgentToolsAction
 import io.github.mangi.eta.ui.model.AgentToolsUiState
 import io.github.mangi.eta.ui.model.ToolGroupUi
 import io.github.mangi.eta.ui.model.projectToolGroups
+import io.github.mangi.eta.ui.model.toolScopeDiffers
 import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.SmallTitle
 import top.yukonga.miuix.kmp.basic.TabRow
@@ -128,12 +129,13 @@ fun AgentToolsScreen(
     var selectedGroupId by rememberSaveable { mutableStateOf(ALL_GROUP_FILTER) }
     val currentListState = rememberLazyListState()
     val allListState = rememberLazyListState()
-    val visibleGroups = projectToolGroups(
-        state.groups,
-        showAll,
-        capabilities.root.isGranted,
-        capabilities.tools.colorOs,
-    )
+    val currentGroups = projectToolGroups(state.groups, false,
+        capabilities.root.isGranted, capabilities.tools.colorOs)
+    val allGroups = projectToolGroups(state.groups, true,
+        capabilities.root.isGranted, capabilities.tools.colorOs)
+    val showScopeSelector = toolScopeDiffers(currentGroups, allGroups)
+    val effectiveShowAll = showScopeSelector && showAll
+    val visibleGroups = if (effectiveShowAll) allGroups else currentGroups
     val activeFilterId = if (selectedGroupId == ALL_GROUP_FILTER || visibleGroups.any { it.id == selectedGroupId }) {
         selectedGroupId
     } else {
@@ -155,13 +157,13 @@ fun AgentToolsScreen(
                 title = stringResource(R.string.compact_tools_title),
                 onBack = { onAction(AgentToolsAction.NavigateBack) },
                 modifier = modifier,
-                listState = if (showAll) allListState else currentListState,
+                listState = if (effectiveShowAll) allListState else currentListState,
             ) {
                 item(key = "management-header") { managementHeader() }
-                item(key = "capability-view") {
+                if (showScopeSelector) item(key = "capability-view") {
                     CouiSegmentedTabs(
                         items = tabs,
-                        selectedKey = showAll,
+                        selectedKey = effectiveShowAll,
                         onSelectedKeyChange = { showAll = it },
                         modifier = Modifier.padding(
                             horizontal = CouiPageDefaults.horizontalMargin,
@@ -232,16 +234,16 @@ fun AgentToolsScreen(
                 title = stringResource(R.string.compact_tools_title),
                 onBack = { onAction(AgentToolsAction.NavigateBack) },
                 modifier = modifier,
-                listState = if (showAll) allListState else currentListState,
+                listState = if (effectiveShowAll) allListState else currentListState,
             ) {
                 item(key = "management-header") { managementHeader() }
-                item(key = "capability-view") {
+                if (showScopeSelector) item(key = "capability-view") {
                     TabRow(
                         tabs = listOf(
                             stringResource(R.string.capability_current_device),
                             stringResource(R.string.capability_all),
                         ),
-                        selectedTabIndex = if (showAll) 1 else 0,
+                        selectedTabIndex = if (effectiveShowAll) 1 else 0,
                         onTabSelected = { showAll = it == 1 },
                         modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
                     )

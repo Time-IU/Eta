@@ -80,7 +80,7 @@ import top.yukonga.miuix.kmp.basic.InfiniteProgressIndicator
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.basic.TextField
 import top.yukonga.miuix.kmp.theme.MiuixTheme
-import top.yukonga.miuix.kmp.window.WindowDialog
+import io.github.mangi.eta.ui.components.EtaWindowDialog as WindowDialog
 
 @Composable
 internal fun SharedFoldersScreen(

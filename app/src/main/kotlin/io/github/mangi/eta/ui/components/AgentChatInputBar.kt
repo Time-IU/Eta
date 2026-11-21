@@ -117,6 +117,8 @@ import io.github.mangi.eta.data.model.AppearanceUiStyle
 import io.github.mangi.eta.data.model.ReasoningEffort
 import io.github.mangi.eta.data.repository.SpeechSettingsRepository
 import io.github.mangi.eta.ui.app.LocalUiStyle
+import io.github.mangi.eta.ui.components.glass.liquidGlassSurface
+import io.github.mangi.eta.ui.components.glass.liquidGlassActive
 import io.github.mangi.eta.ui.markdown.EditorialLineHeightStyle
 import androidx.compose.ui.platform.LocalContext
 import io.github.mangi.eta.ui.app.ChatDraftStore
@@ -597,7 +599,10 @@ internal fun AgentChatInputBar(
                 modifier = Modifier
                     .fillMaxWidth()
                     .then(
-                        if (isCoui) {
+                        if (liquidGlassActive()) {
+                            Modifier.liquidGlassSurface(RoundedCornerShape(24.dp))
+                                .border(inputBorderWidth, inputBorderColor, RoundedCornerShape(24.dp))
+                        } else if (isCoui) {
                             Modifier
                                 .dropShadow(
                                     shape = couiInputShape,

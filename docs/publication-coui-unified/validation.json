@@ -1,0 +1,49 @@
+{
+  "versionName": "3.4.4-debug+integration-por.coui-unified",
+  "bytes": 59687777,
+  "sha256": "7ec14d88893167a1abe64b65cfcbd9679793d2e0044d7ada7949fb1b6c71d259",
+  "tests": {
+    "tests": 2428,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 94,
+    "suites": 428,
+    "passed": 2334,
+    "newRegressionSuites": {
+      "io.github.mangi.eta.ui.app.UnifiedEffectsPolicyTest": {
+        "tests": 3,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "io.github.mangi.eta.ui.model.ToolScopeSelectorTest": {
+        "tests": 6,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      }
+    }
+  },
+  "buildExitCode": 0,
+  "signatureVerified": true,
+  "signatureSchemesVerified": [
+    "V3"
+  ],
+  "certificateSha256": "a40da80a59d170caa950cf15c18c454d47a39b26989d8b640ecd745ba71bf5dc",
+  "nonSignaturePayloadEntries": 521,
+  "unsignedSignedPayloadIdentical": true,
+  "zipIntegrity": true,
+  "nativeLibrariesUnchangedFromLiquidglass": 15,
+  "existingNoticeAssetsUnchanged": 38,
+  "artHardAndSoftVerifierExit": 0,
+  "deviceVisualOrGestureAcceptance": false,
+  "allRoutesVisuallyAudited": false,
+  "measuredFps": false,
+  "limitations": [
+    "native COUI modal geometry and material now share implementation but new package has not been installed for route-by-route visual acceptance",
+    "compact message selection menu and playback overlays retain their dedicated layout/ownership; not blindly replaced by a modal",
+    "system permissions, full-screen previews and third-party system windows keep their appropriate native presentation",
+    "prior persistence suite remains skipped in this Linux aarch64 environment"
+  ],
+  "recordScope": "Historical local validation of exact APK; upload preparation independently rechecks hash/signature, not a new build or UI test."
+}

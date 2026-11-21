@@ -41,14 +41,14 @@ fun MiuixDialogActions(
         modifier = modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.SpaceBetween,
     ) {
-        TextButton(
+        EtaTextButton(
             text = cancelText ?: stringResource(R.string.action_cancel),
             onClick = onCancel,
             enabled = cancelEnabled,
             modifier = Modifier.weight(1f),
         )
         Spacer(Modifier.width(20.dp))
-        TextButton(
+        EtaTextButton(
             text = confirmText,
             onClick = onConfirm,
             enabled = confirmEnabled,

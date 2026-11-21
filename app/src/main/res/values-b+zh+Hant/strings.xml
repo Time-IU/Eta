@@ -155,7 +155,7 @@
   <string name="appearance_ui_style_coui">COUI</string>
   <string name="appearance_ui_style_miuix">Miuix</string>
   <string name="appearance_theme_mode">主題模式</string>
-  <string name="appearance_theme_system">跟隨系統</string>
+  <string name="appearance_theme_system">跟隨系統（自動切換）</string>
   <string name="appearance_theme_light">淺色</string>
   <string name="appearance_theme_dark">深色</string>
   <string name="appearance_monet">Monet 取色</string>

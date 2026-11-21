@@ -1,0 +1,4 @@
+<resources>
+    <string name="appearance_liquid_glass">液態玻璃（試用）</string>
+    <string name="appearance_liquid_glass_summary">輸入列與彈層使用玻璃效果；關閉恢復實色。關閉模糊時停用。</string>
+</resources>

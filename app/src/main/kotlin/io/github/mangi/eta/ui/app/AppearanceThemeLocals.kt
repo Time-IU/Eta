@@ -11,3 +11,8 @@ internal val LocalUiStyle = staticCompositionLocalOf { AppearanceUiStyle.COUI }
 internal val LocalBlurEnabled = staticCompositionLocalOf { true }
 internal val LocalTopBarBlurStyle = staticCompositionLocalOf { AppearanceTopBarBlurStyle.GAUSSIAN }
 internal val LocalPlatformDensity = staticCompositionLocalOf<Density?> { null }
+
+/** Actual application theme, including explicit light/dark overrides. */
+internal val LocalResolvedDarkTheme = staticCompositionLocalOf { false }
+/** Disabled for system/service overlays that can temporarily use a software Canvas. */
+internal val LocalLiquidGlassAllowed = staticCompositionLocalOf { false }

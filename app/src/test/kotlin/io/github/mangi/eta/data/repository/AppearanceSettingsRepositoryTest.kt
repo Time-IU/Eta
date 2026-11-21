@@ -26,6 +26,7 @@ class AppearanceSettingsRepositoryTest {
         val appearance = AppearanceSettings(
             uiStyle = AppearanceUiStyle.MIUIX,
             themeMode = AppearanceThemeMode.DARK,
+            liquidGlassEnabled = false,
             monetEnabled = true,
             accentColor = AppearanceAccentColor.TEAL,
             interfaceScale = 0.9f,
@@ -88,5 +89,33 @@ class AppearanceSettingsRepositoryTest {
         } finally {
             AppearanceSettingsRepository.update(before)
         }
+    }
+
+    @Test
+    fun liquidGlassChoiceRoundTripsWithoutChangingOtherSettings() = runBlocking {
+        val before = SettingsDataStore.settings()
+        try {
+            AppearanceSettingsRepository.update { it.copy(themeMode = AppearanceThemeMode.DARK,
+                liquidGlassEnabled = false) }
+            assertEquals(false, AppearanceSettingsRepository.settings().liquidGlassEnabled)
+            AppearanceSettingsRepository.update { it.copy(liquidGlassEnabled = true) }
+            val actual = AppearanceSettingsRepository.settings()
+            assertEquals(true, actual.liquidGlassEnabled)
+            assertEquals(AppearanceThemeMode.DARK, actual.themeMode)
+            assertEquals(before.selectedProviderId, SettingsDataStore.settings().selectedProviderId)
+            assertEquals(before.selectedModelId, SettingsDataStore.settings().selectedModelId)
+        } finally { SettingsDataStore.updateSettings { before } }
+    }
+
+    @Test
+    fun returningFromExplicitDarkToSystemPersistsTheSystemChoice() = runBlocking {
+        val before = SettingsDataStore.settings()
+        try {
+            AppearanceSettingsRepository.update { it.copy(themeMode = AppearanceThemeMode.DARK) }
+            AppearanceSettingsRepository.update { it.copy(themeMode = AppearanceThemeMode.SYSTEM) }
+            assertEquals(AppearanceThemeMode.SYSTEM, AppearanceSettingsRepository.settings().themeMode)
+            assertEquals(AppearanceThemeMode.SYSTEM,
+                AppearanceSettingsRepository.settingsFlow().first().themeMode)
+        } finally { SettingsDataStore.updateSettings { before } }
     }
 }

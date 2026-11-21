@@ -198,6 +198,8 @@ dependencies {
     implementation(libs.libxposed.service)
     implementation(libs.dexkit)
     implementation(libs.coui)
+    // Fixed Liquid Glass runtime, Apache-2.0; provenance in assets/licenses.
+    implementation("io.github.kyant0:backdrop-android:2.0.1")
     implementation(libs.coui.icons)
     implementation(libs.miuix.ui)
     implementation(libs.miuix.icons)

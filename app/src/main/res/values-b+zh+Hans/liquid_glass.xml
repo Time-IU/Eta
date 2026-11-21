@@ -1,0 +1,4 @@
+<resources>
+    <string name="appearance_liquid_glass">液态玻璃（试用）</string>
+    <string name="appearance_liquid_glass_summary">输入栏与弹层使用玻璃效果；关闭恢复实色。关闭模糊时停用。</string>
+</resources>

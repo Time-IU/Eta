@@ -15,12 +15,15 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import io.github.mangi.eta.ui.components.coui.messageDialogShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import io.github.mangi.eta.ui.components.coui.messageDialogInk
+import io.github.mangi.eta.ui.components.coui.messageDialogSurface
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
@@ -100,15 +103,15 @@ internal fun CustomMessageMenuDialog(
         Column(
             modifier = Modifier.width(width)
                 .heightIn(max = (configuration.screenHeightDp * 0.75f).dp)
-                .shadow(8.dp, RoundedCornerShape(24.dp))
-                .clip(RoundedCornerShape(24.dp))
-                .background(Color(0xFFF4F4F7))
+                .shadow(8.dp, messageDialogShape())
+                .clip(messageDialogShape())
+                .background(messageDialogSurface())
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = 8.dp, vertical = 6.dp),
             verticalArrangement = Arrangement.spacedBy(2.dp),
         ) {
             actions.forEach { action ->
-                val tint = Color(0xFF202020).copy(alpha = if (action.unavailable == null) 1f else 0.45f)
+                val tint = messageDialogInk().copy(alpha = if (action.unavailable == null) 1f else 0.45f)
                 Row(
                     modifier = Modifier.fillMaxWidth()
                         .semantics { action.unavailable?.let { stateDescription = "不可用：$it" } }

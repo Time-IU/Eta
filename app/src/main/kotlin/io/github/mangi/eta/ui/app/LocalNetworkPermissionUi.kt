@@ -25,7 +25,7 @@ import io.github.mangi.eta.ui.model.LOCAL_NETWORK_PERMISSION_ITEM_ID
 import io.github.mangi.eta.ui.model.PermissionHealthItemUi
 import io.github.mangi.eta.ui.model.PermissionStatusUi
 import top.yukonga.miuix.kmp.layout.DialogDefaults
-import top.yukonga.miuix.kmp.window.WindowDialog
+import io.github.mangi.eta.ui.components.EtaWindowDialog as WindowDialog
 
 internal fun localNetworkPermissionHealthItem(context: Context): PermissionHealthItemUi? {
     val access = LocalNetworkPermission.accessState(context)

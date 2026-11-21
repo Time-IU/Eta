@@ -125,7 +125,8 @@ internal fun UnifiedUsageSheet(show: Boolean, usage: AgentContextUsageUi, canCom
         if (canCompact) UsageAction(stringResource(R.string.context_compact_action), primary = true) {
             onDismiss(); onCompact()
         }
-        UsageAction(stringResource(R.string.action_close), primary = false, onDismiss)
+        if (LocalUiStyle.current != AppearanceUiStyle.COUI)
+            UsageAction(stringResource(R.string.action_close), primary = false, onDismiss)
     }
     help?.let { (scope, metric) ->
         UsageCard({ help = null }) {
@@ -137,7 +138,8 @@ internal fun UnifiedUsageSheet(show: Boolean, usage: AgentContextUsageUi, canCom
                 Text(stringResource(usageMetricExplanation(metric)), style = MiuixTheme.textStyles.body1.copy(fontSize = 14.sp, lineHeight = 20.sp), color = ink)
                 // Each explanation is metric-specific; accounting details remain in the source policy.
             }
-            UsageAction(stringResource(R.string.action_close), primary = false) { help = null }
+            if (LocalUiStyle.current != AppearanceUiStyle.COUI)
+                UsageAction(stringResource(R.string.action_close), primary = false) { help = null }
         }
     }
 }

@@ -4,7 +4,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.text.BasicText
-import androidx.compose.foundation.isSystemInDarkTheme
+import io.github.mangi.eta.ui.app.LocalResolvedDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.sizeIn
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import io.github.mangi.eta.ui.components.coui.messageDialogShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
@@ -29,6 +30,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import io.github.mangi.eta.ui.components.coui.messageDialogSurface
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -40,6 +42,10 @@ import androidx.compose.ui.window.DialogProperties
 /** v342 review -> background persistence -> rounded result; button row never scrolls. */
 @Composable
 internal fun MessageSaveDialogs(controller: MessageSaveController) {
+    if (io.github.mangi.eta.ui.app.LocalUiStyle.current == io.github.mangi.eta.data.model.AppearanceUiStyle.COUI) {
+        CouiMessageSaveDialogs(controller)
+        return
+    }
     val result = controller.result
     val review = controller.review
     if (result != null) {
@@ -84,7 +90,7 @@ internal fun MessageSaveDialogs(controller: MessageSaveController) {
                     onValueChange = controller::edit,
                     enabled = !controller.saving,
                     modifier = Modifier.fillMaxWidth().padding(top = 12.dp)
-                        .background(if (isSystemInDarkTheme()) Color(0xFF303034) else Color.White, RoundedCornerShape(12.dp))
+                        .background(if (LocalResolvedDarkTheme.current) Color(0xFF303034) else Color.White, RoundedCornerShape(12.dp))
                         .padding(12.dp).heightIn(min = 120.dp),
                     textStyle = TextStyle(color = saveForeground(), fontSize = 16.sp, lineHeight = 24.sp),
                 )
@@ -122,9 +128,9 @@ private fun MessageSaveDialogFrame(
             val formWidth = minOf(maxWidth * 0.9f, 420.dp)
             val bodyHeight = maxHeight * 0.45f
             Box(
-                modifier = Modifier.width(formWidth).shadow(8.dp, RoundedCornerShape(24.dp))
-                    .clip(RoundedCornerShape(24.dp))
-                    .background(if (isSystemInDarkTheme()) Color(0xFF242428) else Color(0xFFF4F4F7)),
+                modifier = Modifier.width(formWidth).shadow(8.dp, messageDialogShape())
+                    .clip(messageDialogShape())
+                    .background(messageDialogSurface()),
             ) {
                 Column {
                     Text(title, modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 20.dp, bottom = 12.dp),
@@ -148,14 +154,14 @@ private fun SaveDialogButton(
     enabled: Boolean = true,
     secondary: Boolean = false,
 ) {
-    val background = if (isSystemInDarkTheme()) {
+    val background = if (LocalResolvedDarkTheme.current) {
         if (secondary) Color(0xFF303034) else Color(0xFF3E3E42)
     } else {
         if (secondary) Color(0xFFE5E5E8) else Color(0xFFEAEAEC)
     }
     Box(
         modifier = Modifier.padding(start = 8.dp).alpha(if (enabled) 1f else 0.5f)
-            .clip(RoundedCornerShape(24.dp)).background(background)
+            .clip(messageDialogShape()).background(background)
             .clickable(enabled = enabled, role = Role.Button, onClick = onClick)
             .sizeIn(minWidth = 80.dp, minHeight = 48.dp).padding(horizontal = 16.dp, vertical = 8.dp),
         contentAlignment = Alignment.Center,
@@ -164,7 +170,7 @@ private fun SaveDialogButton(
 
 @Composable
 private fun saveForeground(): Color =
-    if (isSystemInDarkTheme()) Color(0xFFF4F4F7) else Color(0xFF202020)
+    if (LocalResolvedDarkTheme.current) Color(0xFFF4F4F7) else Color(0xFF202020)
 
 @Composable
 private fun Text(

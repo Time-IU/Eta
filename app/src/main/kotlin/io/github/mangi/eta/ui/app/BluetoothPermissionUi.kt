@@ -22,7 +22,7 @@ import io.github.mangi.eta.ui.components.MiuixDialogActions
 import io.github.mangi.eta.ui.model.PermissionHealthItemUi
 import io.github.mangi.eta.ui.model.PermissionStatusUi
 import top.yukonga.miuix.kmp.layout.DialogDefaults
-import top.yukonga.miuix.kmp.window.WindowDialog
+import io.github.mangi.eta.ui.components.EtaWindowDialog as WindowDialog
 
 internal fun bluetoothPermissionHealthItem(context: Context): PermissionHealthItemUi {
     val granted = hasBluetoothConnectionPermission(context)

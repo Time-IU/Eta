@@ -127,7 +127,7 @@ import top.yukonga.miuix.kmp.preference.ArrowPreference
 import top.yukonga.miuix.kmp.preference.OverlayDropdownPreference
 import top.yukonga.miuix.kmp.preference.SwitchPreference
 import top.yukonga.miuix.kmp.theme.MiuixTheme
-import top.yukonga.miuix.kmp.window.WindowDialog
+import io.github.mangi.eta.ui.components.EtaWindowDialog as WindowDialog
 
 private object SettingsIconColors {
     val Blue = Color(0xFF4285F4)
@@ -722,9 +722,7 @@ private fun SettingsPageContent(
                         },
                         onClick = { onNavigate(AppRoute.LinuxEnvironment) },
                     )
-                }
-
-                Group {
+                    CouiIconDivider()
                     CouiPreference(
                         title = stringResource(R.string.capability_enhancements),
                         icon = { CleanupIconTile(Icons.Rounded.Security, SettingsIconColors.Blue) },
