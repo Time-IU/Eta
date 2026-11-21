@@ -1,7 +1,7 @@
-# Eta · COUI Unified Preview
+# Eta · Release Performance / Compact Preview
 
-Unofficial custom v3.4.4 snapshot: native COUI shared page scaffolds, consistent modal surfaces, grouped Root settings and removal of redundant capability tabs. MIUIX, liquid-glass composer, speech, files and permissions remain.
+Unofficial COUI-based custom v3.4.4 preview. The signed APK is reduced from 59.7 MB to 28.1 MB (52.9%) using R8/resource shrinking without removing speech engines, features or UI styles. Streaming Markdown render-target parsing is coalesced at a bounded cadence; network, persisted messages and final text are unchanged.
 
-[Download](https://github.com/Time-IU/Eta/releases/tag/v3.4.4-por-coui-unified) · [Changes, provenance and verification limits](docs/publication-coui-unified/release-notes.md) · [Build](BUILD.md) · [Third-party notices](THIRD_PARTY.md)
+[Download](https://github.com/Time-IU/Eta/releases/tag/v3.4.4-por-perf-compact) · [Changes and verification limits](docs/publication-perf-compact/release-notes.md) · [Build](BUILD.md) · [Third-party notices](THIRD_PARTY.md)
 
-Preserves sources and applicable notices from Mangi-11/Eta, Oo0520/Eta-por and third-party components. Publication is not a claim that combined-source licensing review is complete. The signed preview uses the historical custom certificate, not the official signing key. Back up before upgrading. Historical regression/ART checks do not establish complete route-by-route device acceptance. No public CI publication workflow is included.
+Release denotes the build type, not complete device acceptance. No measured CPU/FPS improvement is claimed. Existing custom signing certificate retained; back up before upgrading. Preserves Mangi-11/Eta, Oo0520/Eta-por and third-party source/license notices. Public upload does not establish that combined-source licensing review is complete. No private CI history or signing keys are included.

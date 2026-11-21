@@ -1,0 +1,77 @@
+{
+  "versionName": "3.4.4+integration-por.perf-compact",
+  "bytes": 28111705,
+  "sha256": "05c8a635c01bc17667b7fef5a2d5a1f94352927e9e020c15bf48d9784293fff9",
+  "unsignedSha256": "2f2c3b6f0147035d7f5f848c1977eb1dce04f02f568c4149b5312ddf7cd0d8a5",
+  "baselineVersion": "3.4.4-debug+integration-por.coui-unified",
+  "baselineBytes": 59687777,
+  "baselineApkSha256": "7ec14d88893167a1abe64b65cfcbd9679793d2e0044d7ada7949fb1b6c71d259",
+  "sizeReductionPercent": 52.9,
+  "buildType": "release; existing R8 and resource shrinking enabled",
+  "sourceFilesVerified": 4470,
+  "buildSucceeded": true,
+  "signatureVerified": true,
+  "schemesVerified": [
+    "V3"
+  ],
+  "certificateSha256": "a40da80a59d170caa950cf15c18c454d47a39b26989d8b640ecd745ba71bf5dc",
+  "sameHistoricalCustomCertificate": true,
+  "nonSignaturePayloadsIdentical": true,
+  "nonSignaturePayloadCount": 347,
+  "zipIntegrity": true,
+  "tests": {
+    "tests": 2433,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 94,
+    "suites": 429,
+    "passed": 2339
+  },
+  "newCadenceTestsPassed": 5,
+  "testScope": "Previously completed testDebugUnitTest on the same production/test Kotlin sources; final retry changes only ProGuard keep rule and rebuilds release. Not release UI or all-device tests.",
+  "inheritedEnvironmentExclusions": {
+    "methods": 117,
+    "classes": 5,
+    "notCountedAsPassing": true
+  },
+  "artHardSoftVerifierExit": 0,
+  "firstReleaseArtFailure": {
+    "hardFailures": 0,
+    "softFailures": 1,
+    "class": "org.apache.commons.compress.archivers.tar.TarUtils",
+    "method": "parsePaxHeaders",
+    "reason": "monitor-lock verification after R8 dependency inlining; reported by device ART",
+    "fix": "Narrow -keep,allowobfuscation rules for TarUtils and synchronized Commons IO ByteArrayOutputStream/AbstractByteArrayOutputStream; caller-only rule was insufficient; optimization remains enabled elsewhere",
+    "rejectedSignedArtifactArchived": true
+  },
+  "independentRootLinkageProbePassed": true,
+  "probeOperations": [
+    "four app_process main method lookups without invoking services",
+    "GGUF JNI class/native library initialization",
+    "Sherpa ONNX and NCNN native library initialization without model loading",
+    "JNA initialization and Vosk native method registration",
+    "bounded in-memory PAX archive parse with fictional record"
+  ],
+  "probeLimits": "Independent root process, not application UID/SELinux/Binder, real model recognition or Hook activation acceptance. No models loaded, apps installed, settings changed or notifications posted.",
+  "performanceChange": "48/80/120ms bounded full-Markdown render-target parse cadence; network, persisted messages, final content, UI theme and native engines preserved",
+  "cpuOrFpsImprovementMeasured": false,
+  "deviceVisualAcceptance": false,
+  "independentReviewer": false,
+  "criticalEntrypoints": {
+    "io.github.mangi.eta.agent.phone.PhoneCommandMain": "public static main retained",
+    "io.github.mangi.eta.agent.virtualdisplay.VirtualDisplayCommandMain": "public static main retained",
+    "io.github.mangi.eta.agent.display.RootDisplayCommandMain": "public static main retained",
+    "io.github.mangi.eta.agent.display.VirtualScreenRootTextInput": "public static main retained",
+    "xposedEntry": {
+      "class": "gw4",
+      "constructor": "public retained and metadata adapted"
+    },
+    "ggufJni": "all three fixed-name native methods retained",
+    "Lcom/k2fsa/sherpa/onnx/": 29,
+    "Lcom/k2fsa/sherpa/ncnn/": 6,
+    "Lcom/sun/jna/": 101,
+    "nativeLibrariesUnchanged": 15,
+    "assetsUnchanged": 127
+  },
+  "historicalValidationNotRerunByUpload": true
+}

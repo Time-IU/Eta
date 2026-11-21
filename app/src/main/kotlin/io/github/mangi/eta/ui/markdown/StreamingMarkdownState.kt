@@ -31,6 +31,7 @@ internal class StreamingMarkdownState {
 
     suspend fun parseUpdates() = consumeStreamingMarkdownTargets(
         targets = parseTargets,
+        minimumIntervalMillis = { streamingParseIntervalMillis(it.content.length) },
         parse = { target ->
             withContext(Dispatchers.Default) {
                 parserSession.parse(target.content, isComplete = !target.isStreaming, style = target.style)
@@ -50,12 +51,20 @@ internal suspend fun consumeStreamingMarkdownTargets(
     targets: ReceiveChannel<StreamingMarkdownTarget>,
     parse: suspend (StreamingMarkdownTarget) -> StreamingGfmSnapshot,
     publish: (StreamingGfmSnapshot) -> Unit,
+    minimumIntervalMillis: (StreamingMarkdownTarget) -> Long = { 0L },
 ) {
+    var lastParseStartedAt: Long? = null
     var target = targets.receiveCatching().getOrNull() ?: return
     while (true) {
         while (true) {
             target = targets.tryReceive().getOrNull() ?: break
         }
+        // Fixed cadence rather than debounce: sustained token arrival cannot starve
+        // visible progress. Final/corrected targets bypass the remaining interval.
+        lastParseStartedAt?.let { last ->
+            target = coalesceStreamingParseTarget(targets, target, last, minimumIntervalMillis)
+        }
+        lastParseStartedAt = System.nanoTime() / 1_000_000L
         val parsed = parse(target)
         val newerTarget = targets.tryReceive().getOrNull()
         // 追加分片不会使已解析的前缀失效。若每次有新目标就丢弃结果，持续高速流会
@@ -68,4 +77,32 @@ internal suspend fun consumeStreamingMarkdownTargets(
         }
         target = newerTarget ?: targets.receiveCatching().getOrNull() ?: return
     }
+}
+
+/** GFM parsing rebuilds the complete tree. Batch only render targets, never runtime events,
+ * persistence or the final source. Preserve smooth reveal between parsed snapshots. */
+internal fun streamingParseIntervalMillis(characters: Int): Long = when {
+    characters < 4_096 -> 48L
+    characters < 16_384 -> 80L
+    else -> 120L
+}
+
+private suspend fun coalesceStreamingParseTarget(
+    targets: ReceiveChannel<StreamingMarkdownTarget>,
+    initial: StreamingMarkdownTarget,
+    lastStartedAt: Long,
+    interval: (StreamingMarkdownTarget) -> Long,
+): StreamingMarkdownTarget {
+    var latest = initial
+    while (latest.isStreaming) {
+        val remaining = interval(latest) - (System.nanoTime() / 1_000_000L - lastStartedAt)
+        if (remaining <= 0L) break
+        val next = kotlinx.coroutines.withTimeoutOrNull(remaining) { targets.receiveCatching() }
+            ?: break
+        val value = next.getOrNull() ?: break
+        val appendOnly = value.style == latest.style && value.content.startsWith(latest.content)
+        latest = value
+        if (!appendOnly) break
+    }
+    return latest
 }

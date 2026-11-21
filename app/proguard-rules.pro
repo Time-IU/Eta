@@ -97,3 +97,13 @@
 # 虚拟屏幕悬浮小窗
 -keep class io.github.mangi.eta.agent.display.VirtualScreenFloatWindow { *; }
 -keepclassmembers class io.github.mangi.eta.agent.display.VirtualScreenFloatWindow$* { *; }
+
+# Device ART strict verifier found a monitor-lock soft failure after R8 inlined
+# synchronized Commons IO code into TarUtils.parsePaxHeaders. Preserve this small
+# archive utility's original method bodies; other app/dependency optimization stays on.
+-keep,allowobfuscation class org.apache.commons.compress.archivers.tar.TarUtils { *; }
+
+# Preserve the synchronized IO implementation too: preventing optimization only
+# at the TAR caller still lets synchronized callee inlining introduce monitor code.
+-keep,allowobfuscation class org.apache.commons.io.output.ByteArrayOutputStream { *; }
+-keep,allowobfuscation class org.apache.commons.io.output.AbstractByteArrayOutputStream { *; }
