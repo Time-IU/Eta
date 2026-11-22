@@ -4064,7 +4064,7 @@
     "app/src/test/kotlin/io/github/mangi/eta/agent/model/ProviderUrlsTest.kt": "151879bf7220bbccbab5667029cd8fed02840a79b00b24852d9df94cf7a58f96",
     "app/src/test/kotlin/io/github/mangi/eta/agent/model/SkillInstallModelToolGateTest.kt": "2a2088aaa337a7f369157004a5b58b96ef64934c8ff3754b70cca2c930f2b934",
     "app/src/test/kotlin/io/github/mangi/eta/agent/model/SkillInstallToolCatalogTest.kt": "63bb12324b08c378320108e9707e4c7b08aaa5482413c27807b3a1dba3666724",
-    "app/src/test/kotlin/io/github/mangi/eta/agent/model/VertexGenerateContentTest.kt": "99977d8e371e411b62ab56e5c63fc8e61d4bf5d7629cb2a2cf8aac74f01e8bee",
+    "app/src/test/kotlin/io/github/mangi/eta/agent/model/VertexGenerateContentTest.kt": "64f9feebb52aa8898f8af9ae87fc0764fea45a9bdbe5fcc9f1d05a7066024dae",
     "app/src/test/kotlin/io/github/mangi/eta/agent/overlay/AgentOverlayStateTest.kt": "be843ba6d19ff2e5a0b0616475dade68495b78abd7f7a71bc3cfbbd2f3c5ee69",
     "app/src/test/kotlin/io/github/mangi/eta/agent/overlay/AgentOverlayVisibilityPolicyTest.kt": "127fb0c74d9cbbd1af2af9482393d1f982bb881ec9487312f50452bd12777564",
     "app/src/test/kotlin/io/github/mangi/eta/agent/phone/NativeAppOperationsTest.kt": "2ed424c1dd95f73363a758cea361607c10471947bef5236160e3a54dc0a441d2",
