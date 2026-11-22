@@ -723,7 +723,7 @@ private suspend fun testConnection(
         return "本地助手通道不适用 HTTP 连接测试；请通过对话验证连接"
     }
     if (provider is GeminiProviderSetting && provider.isVertexAi) {
-        val selectedModelId = RuntimeConfigRepository.cachedSelectedModelId()
+        val selectedModelId = SettingsDataStore.settings().selectedModelId
             ?.takeIf { selected -> provider.models.any { it.id == selected && it.isEnabled } }
             ?: provider.id.takeIf(String::isNotBlank)?.let { SettingsDataStore.selectedModelIdForProvider(it) }
         return RemoteModelFetcher.testVertexConnection(provider, preferredModelId = selectedModelId)

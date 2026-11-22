@@ -271,7 +271,7 @@ internal fun ProviderConnectionFields(
                 )
             }
             if (provider is GeminiProviderSetting) {
-                EtaGlassSpinnerPreference(
+                WindowSpinnerPreference(
                     title = "接入平台",
                     items = listOf(
                         DropdownItem(text = "Google AI Studio"),
