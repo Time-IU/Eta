@@ -76,9 +76,6 @@ import io.github.mangi.eta.ui.components.MiuixDialogActions
 import io.github.mangi.eta.ui.components.coui.CouiConfirmDialog
 import io.github.mangi.eta.ui.components.coui.CouiInputDialog
 import io.github.mangi.eta.ui.components.coui.CouiNoticeDialog
-import io.github.mangi.eta.ui.markdown.MarkdownTone
-import io.github.mangi.eta.ui.markdown.rememberMarkdownStyle
-import io.github.mangi.eta.ui.markdown.staticMarkdownDocumentCache
 import io.github.mangi.eta.ui.model.AgentHomeAction
 import io.github.mangi.eta.ui.model.BranchNodeUi
 import io.github.mangi.eta.ui.model.AgentMemoryAction
@@ -994,20 +991,6 @@ fun AgentAppRoot(
                 WorkspaceScreen(onBack = ::popRoute)
             }
             entry<AppRoute.Settings>(swipeDismiss = swipeDismiss) {
-                val answerInlineStyle = rememberMarkdownStyle(MarkdownTone.Answer).inline
-                val savedMemoryContent = memory.memoryState.savedContent
-                LaunchedEffect(Unit) {
-                    memory.refreshMemory()
-                }
-                LaunchedEffect(savedMemoryContent, answerInlineStyle) {
-                    if (savedMemoryContent.isNotBlank() &&
-                        staticMarkdownDocumentCache.get(savedMemoryContent, answerInlineStyle) == null
-                    ) {
-                        withContext(Dispatchers.Default) {
-                            staticMarkdownDocumentCache.parse(savedMemoryContent, answerInlineStyle)
-                        }
-                    }
-                }
                 SettingsScreen(
                     context = context,
                     onNavigate = { route -> pushRoute(route) },

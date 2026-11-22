@@ -170,7 +170,7 @@ internal fun ConversationPanePanel(
     val barInsets = remember { PaneBarInsets() }
     val bodyCaptureModifier = when {
         isCoui && couiBackdrop != null -> Modifier.couiBackdrop(couiBackdrop)
-        !isCoui && miuixBackdrop != null -> Modifier.captureForTopBar(miuixBackdrop)
+        !isCoui && isRevealed && miuixBackdrop != null -> Modifier.captureForTopBar(miuixBackdrop)
         else -> Modifier
     }
 
