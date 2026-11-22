@@ -1,0 +1,91 @@
+name: Private unsigned APK
+run-name: Private unsigned APK · ${{ github.sha }}
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: private-unsigned-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build unsigned Release APK
+    if: github.event.repository.private == true
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Checkout exact source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - name: Assert private repository
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, os
+          with open(os.environ['GITHUB_EVENT_PATH']) as stream:
+              event = json.load(stream)
+          assert event['repository']['private'] is True, 'Private repository required'
+          PY
+
+      - name: Configure JDK, Gradle and Android SDK
+        uses: ./.github/actions/setup-build
+
+      - name: Install explicit Build Tools
+        shell: bash
+        run: sdkmanager 'build-tools;36.0.0'
+
+      - name: Verify source snapshot inputs
+        shell: bash
+        run: python3 scripts/private-build/verify-source.py
+
+      - name: Build without signing
+        shell: bash
+        run: |
+          set -euo pipefail
+          unset ETA_RELEASE_STORE_FILE ETA_RELEASE_STORE_PASSWORD ETA_RELEASE_KEY_ALIAS ETA_RELEASE_KEY_PASSWORD
+          chmod +x gradlew
+          ./gradlew -I scripts/private-build/unsigned.init.gradle \
+            --no-daemon --no-configuration-cache --max-workers=2 \
+            -Pkotlin.compiler.execution.strategy=in-process \
+            '-Dorg.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=1g -Dfile.encoding=UTF-8' \
+            "-Peta.buildMetadata=private.${GITHUB_SHA:0:12}" \
+            :app:assertPrivateUnsignedBuild :app:assembleRelease
+
+      - name: Run Vertex and upgrade regressions
+        run: |
+          ./gradlew --no-daemon --max-workers=2 :app:testDebugUnitTest \
+            --tests "*VertexGenerateContentTest" --tests "*GeminiProviderConfigurationTest" \
+            --tests "*GeminiModelCatalogHttpTest" --tests "*GeminiModelCapabilitiesTest" \
+            --tests "*GeminiInteractionsTest" --tests "*EtaDatabaseMigrationTest"
+
+      - name: Validate and package unsigned artifact
+        shell: bash
+        run: python3 scripts/private-build/package-artifact.py
+
+      - name: Upload private build artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: Eta-unsigned-${{ github.sha }}
+          path: out/private-build/
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Summarize result
+        if: success()
+        shell: bash
+        run: |
+          cat >> "$GITHUB_STEP_SUMMARY" <<'EOF'
+          ## Unsigned private build
+          - Download the artifact attached to this run (7-day retention).
+          - The APK is deliberately unsigned and cannot be installed as-is.
+          - Sign locally with your existing certificate; no signing key was uploaded.
+          - No Release, tag, public upload or automatic installation was performed.
+          - Build success is not unit-test, ART or device-acceptance evidence.
+          EOF

@@ -1,0 +1,21 @@
+// CI-only signing override. Application sources and normal build settings are unchanged.
+// No keystore is generated, decoded, uploaded or used by this build.
+gradle.beforeProject { p ->
+    p.afterEvaluate {
+        if (p.path == ':app') {
+            p.android.buildTypes.configureEach {
+                signingConfig = null
+            }
+            def guard = p.tasks.register('assertPrivateUnsignedBuild') {
+                doLast {
+                    p.android.buildTypes.each { buildType ->
+                        if (buildType.signingConfig != null) {
+                            throw new GradleException("Signing remains configured for ${buildType.name}")
+                        }
+                    }
+                }
+            }
+            p.tasks.named('preBuild').configure { dependsOn(guard) }
+        }
+    }
+}
