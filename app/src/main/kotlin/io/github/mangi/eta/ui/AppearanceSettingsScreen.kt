@@ -11,7 +11,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -19,6 +18,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.itos.coui.layout.Divider
@@ -29,6 +30,14 @@ import io.github.mangi.eta.R
 import io.github.mangi.eta.data.model.AppearanceAccentColor
 import io.github.mangi.eta.data.model.AppearancePaletteStyle
 import io.github.mangi.eta.data.model.AppearanceSettings
+import io.github.mangi.eta.data.model.MIN_GESTURE_SENSITIVITY
+import io.github.mangi.eta.data.model.MAX_GESTURE_SENSITIVITY
+import io.github.mangi.eta.data.model.MIN_CONVERSATION_PANE_COMMIT_THRESHOLD_PERCENT
+import io.github.mangi.eta.data.model.MAX_CONVERSATION_PANE_COMMIT_THRESHOLD_PERCENT
+import io.github.mangi.eta.data.model.normalizeConversationPaneCommitThreshold
+import io.github.mangi.eta.data.model.normalizeGestureSensitivity
+import io.github.mangi.eta.data.model.CONVERSATION_PANE_EDGE_WIDTH_STEP_DP
+import io.github.mangi.eta.data.model.MIN_CONVERSATION_PANE_EDGE_WIDTH_DP
 import io.github.mangi.eta.data.model.AppearanceThemeMode
 import io.github.mangi.eta.data.model.AppearanceTopBarBlurStyle
 import io.github.mangi.eta.data.model.AppearanceUiStyle
@@ -38,6 +47,7 @@ import io.github.mangi.eta.data.model.normalizeInterfaceScale
 import io.github.mangi.eta.data.repository.AppearanceSettingsRepository
 import io.github.mangi.eta.ui.app.LocalAppearanceSettings
 import io.github.mangi.eta.ui.app.LocalUiStyle
+import io.github.mangi.eta.ui.components.ConversationPaneEdgeWidthPolicy
 import io.github.mangi.eta.ui.components.MiuixDialogActions
 import io.github.mangi.eta.ui.components.MiuixScaffoldPage
 import io.github.mangi.eta.ui.components.coui.CouiDropdownPreference
@@ -61,9 +71,23 @@ import io.github.mangi.eta.ui.components.EtaWindowDialog as WindowDialog
 @Composable
 internal fun AppearanceSettingsScreen(onBack: () -> Unit) {
     val appearance = LocalAppearanceSettings.current
+    val screenWidthDp = LocalConfiguration.current.screenWidthDp.coerceAtLeast(MIN_CONVERSATION_PANE_EDGE_WIDTH_DP)
+    val paneEdgeMaxDp = screenWidthDp
+    val paneEdgeDefaultDp = ConversationPaneEdgeWidthPolicy.defaultForScreen(screenWidthDp)
+    var gestureSensitivityDraft by remember(appearance.gestureSensitivity) {
+        mutableFloatStateOf(appearance.gestureSensitivity)
+    }
+    var paneCommitThresholdDraft by remember(appearance.conversationPaneCommitThresholdPercent) {
+        mutableFloatStateOf(appearance.conversationPaneCommitThresholdPercent)
+    }
     val coroutineScope = rememberCoroutineScope()
     var scaleDraft by remember(appearance.interfaceScale) {
         mutableFloatStateOf(appearance.interfaceScale * 100f)
+    }
+    var paneEdgeSliderStep by remember(appearance.conversationPaneEdgeWidthDp, screenWidthDp) {
+        val width = if (appearance.conversationPaneEdgeWidthDp == 0) paneEdgeDefaultDp
+        else appearance.conversationPaneEdgeWidthDp.coerceIn(MIN_CONVERSATION_PANE_EDGE_WIDTH_DP, paneEdgeMaxDp)
+        mutableFloatStateOf(ConversationPaneEdgeWidthPolicy.sliderValueForWidth(width, paneEdgeMaxDp))
     }
     var showScaleDialog by remember { mutableStateOf(false) }
     var scaleInput by remember { mutableStateOf("") }
@@ -185,6 +209,62 @@ internal fun AppearanceSettingsScreen(onBack: () -> Unit) {
                         onCheckedChange = { enabled ->
                             update { current -> current.copy(predictiveBackEnabled = enabled) }
                         },
+                    )
+                    Divider()
+                    CouiSliderPreference(
+                        title = stringResource(R.string.appearance_pane_edge_width),
+                        summary = stringResource(
+                            R.string.appearance_pane_edge_width_summary,
+                            ConversationPaneEdgeWidthPolicy.widthForSliderValue(paneEdgeSliderStep, paneEdgeMaxDp),
+                        ),
+                        value = paneEdgeSliderStep,
+                        onValueChange = { value -> paneEdgeSliderStep = value },
+                        valueRange = 0f..ConversationPaneEdgeWidthPolicy.SliderIntervals.toFloat(),
+                        steps = ConversationPaneEdgeWidthPolicy.SliderIntervals - 1,
+                        showTickMarks = true,
+                        onValueChangeFinished = {
+                            val width = ConversationPaneEdgeWidthPolicy.widthForSliderValue(paneEdgeSliderStep, paneEdgeMaxDp)
+                            update { it.copy(conversationPaneEdgeWidthDp = width) }
+                        },
+                        valueText = ConversationPaneEdgeWidthPolicy.displayValue(
+                            ConversationPaneEdgeWidthPolicy.widthForSliderValue(paneEdgeSliderStep, paneEdgeMaxDp),
+                        ),
+                    )
+                    Divider()
+                    CouiSliderPreference(
+                        title = stringResource(R.string.appearance_gesture_sensitivity),
+                        summary = stringResource(R.string.appearance_gesture_sensitivity_summary),
+                        value = gestureSensitivityDraft * 100f,
+                        onValueChange = { value ->
+                            gestureSensitivityDraft = normalizeGestureSensitivity(value / 100f)
+                        },
+                        onValueChangeFinished = {
+                            val sensitivity = normalizeGestureSensitivity(gestureSensitivityDraft)
+                            gestureSensitivityDraft = sensitivity
+                            update { it.copy(gestureSensitivity = sensitivity) }
+                        },
+                        valueRange = (MIN_GESTURE_SENSITIVITY * 100f)..(MAX_GESTURE_SENSITIVITY * 100f),
+                        steps = 5,
+                        showTickMarks = true,
+                        valueText = "${(gestureSensitivityDraft * 100f).roundToInt()}%",
+                    )
+                    Divider()
+                    CouiSliderPreference(
+                        title = stringResource(R.string.appearance_pane_commit_threshold),
+                        summary = stringResource(R.string.appearance_pane_commit_threshold_summary),
+                        value = paneCommitThresholdDraft,
+                        onValueChange = { value ->
+                            paneCommitThresholdDraft = normalizeConversationPaneCommitThreshold(value)
+                        },
+                        onValueChangeFinished = {
+                            val threshold = normalizeConversationPaneCommitThreshold(paneCommitThresholdDraft)
+                            paneCommitThresholdDraft = threshold
+                            update { it.copy(conversationPaneCommitThresholdPercent = threshold) }
+                        },
+                        valueRange = MIN_CONVERSATION_PANE_COMMIT_THRESHOLD_PERCENT..MAX_CONVERSATION_PANE_COMMIT_THRESHOLD_PERCENT,
+                        steps = 5,
+                        showTickMarks = true,
+                        valueText = "${"%.1f".format(java.util.Locale.ROOT, paneCommitThresholdDraft)}%",
                     )
                     Divider()
                     CouiSliderPreference(
@@ -350,6 +430,62 @@ internal fun AppearanceSettingsScreen(onBack: () -> Unit) {
                             onCheckedChange = { enabled ->
                                 update { current -> current.copy(swipeDismissEnabled = enabled) }
                             },
+                        )
+                        SliderPreference(
+                            title = stringResource(R.string.appearance_pane_edge_width),
+                            summary = stringResource(
+                            R.string.appearance_pane_edge_width_summary,
+                            ConversationPaneEdgeWidthPolicy.widthForSliderValue(paneEdgeSliderStep, paneEdgeMaxDp),
+                        ),
+                            value = paneEdgeSliderStep,
+                            onValueChange = { value -> paneEdgeSliderStep = value },
+                            valueRange = 0f..ConversationPaneEdgeWidthPolicy.SliderIntervals.toFloat(),
+                            valueText = ConversationPaneEdgeWidthPolicy.displayValue(
+                                ConversationPaneEdgeWidthPolicy.widthForSliderValue(paneEdgeSliderStep, paneEdgeMaxDp),
+                            ),
+                            onValueChangeFinished = {
+                                val width = ConversationPaneEdgeWidthPolicy.widthForSliderValue(paneEdgeSliderStep, paneEdgeMaxDp)
+                                update { it.copy(conversationPaneEdgeWidthDp = width) }
+                            },
+                            keyPoints = (0..ConversationPaneEdgeWidthPolicy.SliderIntervals).map(Int::toFloat),
+                            showKeyPoints = true,
+                            hapticEffect = SliderDefaults.SliderHapticEffect.Step,
+                        )
+                        SliderPreference(
+                            title = stringResource(R.string.appearance_gesture_sensitivity),
+                            summary = stringResource(R.string.appearance_gesture_sensitivity_summary),
+                            value = gestureSensitivityDraft * 100f,
+                            onValueChange = { value ->
+                                gestureSensitivityDraft = normalizeGestureSensitivity(value / 100f)
+                            },
+                            onValueChangeFinished = {
+                                val sensitivity = normalizeGestureSensitivity(gestureSensitivityDraft)
+                                gestureSensitivityDraft = sensitivity
+                                update { it.copy(gestureSensitivity = sensitivity) }
+                            },
+                            valueRange = (MIN_GESTURE_SENSITIVITY * 100f)..(MAX_GESTURE_SENSITIVITY * 100f),
+                            valueText = "${(gestureSensitivityDraft * 100f).roundToInt()}%",
+                            keyPoints = (0..6).map { MIN_GESTURE_SENSITIVITY * 100f + ((MAX_GESTURE_SENSITIVITY - MIN_GESTURE_SENSITIVITY) * 100f * it / 6f) },
+                            showKeyPoints = true,
+                            hapticEffect = SliderDefaults.SliderHapticEffect.Step,
+                        )
+                        SliderPreference(
+                            title = stringResource(R.string.appearance_pane_commit_threshold),
+                            summary = stringResource(R.string.appearance_pane_commit_threshold_summary),
+                            value = paneCommitThresholdDraft,
+                            onValueChange = { value ->
+                                paneCommitThresholdDraft = normalizeConversationPaneCommitThreshold(value)
+                            },
+                            onValueChangeFinished = {
+                                val threshold = normalizeConversationPaneCommitThreshold(paneCommitThresholdDraft)
+                                paneCommitThresholdDraft = threshold
+                                update { it.copy(conversationPaneCommitThresholdPercent = threshold) }
+                            },
+                            valueRange = MIN_CONVERSATION_PANE_COMMIT_THRESHOLD_PERCENT..MAX_CONVERSATION_PANE_COMMIT_THRESHOLD_PERCENT,
+                            valueText = "${"%.1f".format(java.util.Locale.ROOT, paneCommitThresholdDraft)}%",
+                            keyPoints = (0..6).map { MIN_CONVERSATION_PANE_COMMIT_THRESHOLD_PERCENT + (MAX_CONVERSATION_PANE_COMMIT_THRESHOLD_PERCENT - MIN_CONVERSATION_PANE_COMMIT_THRESHOLD_PERCENT) * it / 6f },
+                            showKeyPoints = true,
+                            hapticEffect = SliderDefaults.SliderHapticEffect.Step,
                         )
                         SwitchPreference(
                             title = stringResource(R.string.appearance_predictive_back),

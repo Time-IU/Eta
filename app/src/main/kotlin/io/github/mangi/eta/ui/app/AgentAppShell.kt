@@ -171,6 +171,9 @@ internal fun AgentAppShell(
     onWorkspaceOpen: () -> Unit = {},
     onWorkspaceDismiss: () -> Unit = {},
     workspaceContent: (@Composable () -> Unit)? = null,
+    edgeWidthDp: Int = io.github.mangi.eta.data.model.DEFAULT_CONVERSATION_PANE_EDGE_WIDTH_DP,
+    gestureSensitivity: Float = io.github.mangi.eta.data.model.DEFAULT_GESTURE_SENSITIVITY,
+    commitThresholdPercent: Float = io.github.mangi.eta.data.model.DEFAULT_CONVERSATION_PANE_COMMIT_THRESHOLD_PERCENT,
     /** 顶栏放不下的低频状态提示，改在 ⋯ 菜单里以文字列出。 */
     conversationTrimmed: Pair<Int, Int>? = null,
     /** 会话查找是否打开：有面板时隐藏其它手势教学。 */
@@ -366,6 +369,9 @@ internal fun AgentAppShell(
                 onWorkspaceOpen = onWorkspaceOpen,
                 onWorkspaceDismiss = onWorkspaceDismiss,
                 workspaceContent = workspaceContent,
+                edgeWidthDp = edgeWidthDp,
+                gestureSensitivity = gestureSensitivity,
+                commitThresholdPercent = commitThresholdPercent,
             ) {
                 pageContent()
             }
@@ -762,7 +768,7 @@ private fun CharacterTopBarIdentity(character: RoleplayChatUi, onClick: () -> Un
     }
 }
 
-/** No persistent circle, fill, or border; retain a real 48dp button and accessibility label. */
+/** Rounded-rect press region; retain a real 48dp button and accessibility label. */
 @Composable
 private fun ChatTopBarMenuButton(
     icon: androidx.compose.ui.graphics.vector.ImageVector,
@@ -772,7 +778,7 @@ private fun ChatTopBarMenuButton(
     tint: Color = MiuixTheme.colorScheme.onSurface,
 ) {
     Box(
-        modifier = modifier.size(48.dp).clickable(
+        modifier = modifier.size(48.dp).clip(RoundedCornerShape(12.dp)).clickable(
             role = androidx.compose.ui.semantics.Role.Button,
             onClick = onClick,
         ),

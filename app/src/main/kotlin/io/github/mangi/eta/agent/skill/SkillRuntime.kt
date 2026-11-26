@@ -378,16 +378,20 @@ class SkillIndexService(
     }
 
     /** 文件提交成功后，以单次 Room 事务登记用户 Skill，并同步清除索引缓存。 */
-    internal fun registerInstalledUserSkills(skillIds: List<String>) {
+    internal fun registerInstalledUserSkills(
+        skillIds: List<String>,
+        enabledById: Map<String, Boolean> = emptyMap(),
+    ) {
         withMutationLock {
             synchronized(indexLock) {
                 require(skillIds.none { builtinStore.findBuiltin(it) != null }) {
                     "不能把内置 Skill 登记为用户 Skill"
                 }
+                require(enabledById.keys.all { it in skillIds }) { "enabled state includes an unselected Skill" }
                 val registry = registryStore.readStrict()
                 skillIds.distinct().forEach { skillId ->
                     registry[skillId] = SkillRegistryEntry(
-                        enabled = true,
+                        enabled = enabledById[skillId] ?: true,
                         source = USER_SOURCE,
                         installState = INSTALL_STATE_INSTALLED,
                     )

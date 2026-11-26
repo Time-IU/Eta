@@ -27,6 +27,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.horizontalScroll
@@ -45,9 +46,12 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
@@ -71,10 +75,10 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.dropShadow
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -99,6 +103,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -128,6 +133,7 @@ import io.github.mangi.eta.ui.model.AgentPaletteEntry
 import io.github.mangi.eta.ui.model.CommandPaletteUi
 import io.github.mangi.eta.ui.model.commandPaletteEntries
 import io.github.mangi.eta.ui.model.AgentContextUsageUi
+import io.github.mangi.eta.ui.model.formatContextSnapshot
 import io.github.mangi.eta.ui.model.PendingFileReferenceUi
 import io.github.mangi.eta.ui.model.MessageReferenceUi
 import io.github.mangi.eta.ui.model.PendingImageUi
@@ -171,6 +177,7 @@ internal fun AgentChatInputBar(
     onModelSelected: (String) -> Unit = {},
     isCompacting: Boolean,
     contextUsage: AgentContextUsageUi,
+    streamingOutputTokensEstimate: Int = 0,
     showContextUsage: Boolean,
     isStreaming: Boolean,
     reasoningEffort: ReasoningEffort,
@@ -230,6 +237,19 @@ internal fun AgentChatInputBar(
 ) {
     val keyboard = LocalSoftwareKeyboardController.current
     val hapticFeedback = LocalHapticFeedback.current
+    val cacheHitRateLabel = remember(contextUsage.latestUsage, contextUsage.sessionStats) {
+        val latest = contextUsage.latestUsage
+        latest?.cacheHitRate?.let { rate ->
+            java.text.NumberFormat.getNumberInstance().apply {
+                maximumFractionDigits = 1
+                minimumFractionDigits = if (rate * 100.0 == (rate * 100.0).toLong().toDouble()) 0 else 1
+            }.format(rate * 100.0) + "%"
+        } ?: io.github.mangi.eta.ui.model.formatCacheHitRate(
+            cachedTokens = contextUsage.sessionStats.cachedTokens,
+            promptTokens = contextUsage.sessionStats.promptTokens,
+        )
+    }
+
     val focusRequester = remember { FocusRequester() }
     val textFieldState = LocalCustomComposer.current ?: rememberTextFieldState(initialText = input)
     // 命令面板只看本地输入：把每个字符推回业务状态会拖着聊天舞台重组，这里用派生状态解耦。
@@ -280,13 +300,17 @@ internal fun AgentChatInputBar(
         }
     }
     // Detailed application sampling runs only while the runtime panel is visible and STARTED.
-    var showEtaRuntime by remember { mutableStateOf(false) }
-    var showToolSheet by remember { mutableStateOf(false) }
+    var showMcpSheet by remember { mutableStateOf(false) }
+    var showSkillSheet by remember { mutableStateOf(false) }
     val draftContext = LocalContext.current
     if (draftKey != null) {
         // 只记录到草稿仓库，不把每个字符推回业务状态，聊天舞台不会被拖着重组成。
         // 同时落盘一份：内存草稿活不过进程回收，切会话/重启后就贴不回来了。
         LaunchedEffect(textFieldState, draftKey) {
+            val persisted = ChatDraftStore.load(draftContext, draftKey)
+            if (textFieldState.text.isEmpty() && input.isEmpty() && persisted.isNotEmpty()) {
+                textFieldState.setTextAndPlaceCursorAtEnd(persisted)
+            }
             snapshotFlow { textFieldState.text.toString() }
                 .collect { text ->
                     AgentInputDrafts.set(draftKey, text)
@@ -686,80 +710,55 @@ internal fun AgentChatInputBar(
                         }
                     }
                 }
-                // @ 引用面板 / 命令面板打开时收起这行状态，别让它压住输入内容。
-                val mentionPanelOpen = mentionQuery != null && referenceCandidates.isNotEmpty()
-                if (!mentionPanelOpen && !paletteVisible) {
+                // 状态栏始终保留：引用面板和命令面板不能把左侧状态与右侧快捷入口一起隐藏。
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(start = 8.dp, end = 4.dp),
+                        .padding(horizontal = 4.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    // 左上角：最近一次响应的平均输出速度（和内存百分比同一行，靠最左）。
-                    // Speed is read-only; the circle is the only context/request/session statistics entrance.
-                    contextUsage.averageTokensPerSecond?.let { speed ->
-                        val speedText = java.text.NumberFormat.getNumberInstance()
-                            .apply { maximumFractionDigits = 1 }
-                            .format(speed)
-                        Text(
-                            text = "$speedText tok/s",
-                            style = MiuixTheme.textStyles.footnote2,
-                            color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                            modifier = Modifier
-                                .padding(start = 4.dp, end = 8.dp),
-                        )
+                    // Use direct children of the bounded parent Row: nested weighted Rows
+                    // combined with wrap-content actions could measure the left group to zero.
+                    val snapshot = formatContextSnapshot(
+                        contextTokens = contextUsage.contextTokens,
+                        contextWindow = contextUsage.contextWindow,
+                    ) ?: "—/—"
+                    Box(Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
+                        FullStatusChipText(snapshot)
                     }
-                    Spacer(Modifier.weight(1f))
-                    // 入口常驻：数据还没加载完时也要能点开看，否则会像“功能没生效”。
-                    run {
-                        Text(
-                            text = if (toolAccess.mcpItems.isEmpty()) {
-                                stringResource(R.string.tool_access_mcp_chip_plain)
-                            } else if (toolAccess.mcpEnabled == 0) {
-                                stringResource(R.string.tool_access_mcp_chip_off)
-                            } else {
-                                stringResource(
-                                    R.string.tool_access_mcp_chip,
-                                    toolAccess.mcpEnabled,
-                                    toolAccess.mcpItems.size,
-                                )
-                            },
-                            style = MiuixTheme.textStyles.footnote2,
-                            color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                            modifier = Modifier
-                                .clickable { showToolSheet = true }
-                                .padding(horizontal = 4.dp, vertical = 2.dp),
-                        )
-                        Text(
-                            text = if (toolAccess.skillItems.isEmpty()) {
-                                stringResource(R.string.tool_access_skill_chip_plain)
-                            } else {
-                                stringResource(R.string.tool_access_skill_chip, toolAccess.skillEnabled)
-                            },
-                            style = MiuixTheme.textStyles.footnote2,
-                            color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                            modifier = Modifier
-                                .clickable { showToolSheet = true }
-                                .padding(horizontal = 4.dp, vertical = 2.dp),
-                        )
+                    Box(Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
+                        FullStatusChipText(cacheHitRateLabel?.let { "缓存命中 $it" } ?: "缓存命中 —")
                     }
-                    Text(
-                        text = stringResource(R.string.eta_footprint_entry),
-                        style = MiuixTheme.textStyles.footnote2,
-                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                        modifier = Modifier
-                            .clickable { showEtaRuntime = true }
-                            .padding(horizontal = 4.dp, vertical = 2.dp),
-                    )
+                    Box(Modifier.wrapContentWidth(), contentAlignment = Alignment.CenterEnd) {
+                        val mcpLabel = when {
+                            toolAccess.mcpItems.isEmpty() -> stringResource(R.string.tool_access_mcp_chip_plain)
+                            toolAccess.mcpEnabled == 0 -> stringResource(R.string.tool_access_mcp_chip_off)
+                            else -> stringResource(R.string.tool_access_mcp_chip, toolAccess.mcpEnabled, toolAccess.mcpItems.size)
+                        }
+                        StatusChipText(mcpLabel, onClick = { showMcpSheet = true }, ellipsis = false)
+                    }
+                    Box(Modifier.wrapContentWidth(), contentAlignment = Alignment.CenterEnd) {
+                        val skillLabel = if (toolAccess.skillItems.isEmpty()) {
+                            stringResource(R.string.tool_access_skill_chip_plain)
+                        } else stringResource(R.string.tool_access_skill_chip, toolAccess.skillEnabled)
+                        StatusChipText(skillLabel, onClick = { showSkillSheet = true }, ellipsis = false)
+                    }
                 }
-                }
-                EtaRuntimeSheet(show = showEtaRuntime, onDismiss = { showEtaRuntime = false })
                 ToolAccessSheet(
-                    show = showToolSheet,
+                    show = showMcpSheet,
                     state = toolAccess,
+                    kind = io.github.mangi.eta.ui.model.ToolToggleKind.Mcp,
                     onRefresh = onRefreshToolAccess,
                     onToggle = onToggleTool,
-                    onDismiss = { showToolSheet = false },
+                    onDismiss = { showMcpSheet = false },
+                )
+                ToolAccessSheet(
+                    show = showSkillSheet,
+                    state = toolAccess,
+                    kind = io.github.mangi.eta.ui.model.ToolToggleKind.Skill,
+                    onRefresh = onRefreshToolAccess,
+                    onToggle = onToggleTool,
+                    onDismiss = { showSkillSheet = false },
                 )
                 Box(
                     modifier = Modifier
@@ -1350,3 +1349,36 @@ private fun ReferenceChip(reference: MessageReferenceUi, onRemove: () -> Unit) {
 
 /** 命令面板的高度上限：约 4 条（标题 + 两行描述），配合收起状态行后输入框始终可完整显示。 */
 private val CommandPaletteHeightLimit = 200.dp
+
+@Composable
+private fun FullStatusChipText(text: String, modifier: Modifier = Modifier) {
+    Text(
+        text = text,
+        style = MiuixTheme.textStyles.footnote2,
+        color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+        maxLines = 1,
+        overflow = TextOverflow.Clip,
+        softWrap = false,
+        modifier = modifier
+            .horizontalScroll(rememberScrollState())
+            .padding(horizontal = 2.dp, vertical = 2.dp),
+    )
+}
+
+@Composable
+private fun StatusChipText(text: String, onClick: (() -> Unit)? = null, ellipsis: Boolean = true) {
+    val shape = RoundedCornerShape(8.dp)
+    Text(
+        text = text,
+        style = MiuixTheme.textStyles.footnote2,
+        color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+        maxLines = 1,
+        overflow = if (ellipsis) TextOverflow.Ellipsis else TextOverflow.Clip,
+        softWrap = false,
+        modifier = (if (ellipsis) Modifier.fillMaxWidth() else Modifier.wrapContentWidth())
+            .clip(shape)
+            .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
+            .then(if (ellipsis) Modifier else Modifier.horizontalScroll(rememberScrollState()))
+            .padding(horizontal = 2.dp, vertical = 2.dp),
+    )
+}

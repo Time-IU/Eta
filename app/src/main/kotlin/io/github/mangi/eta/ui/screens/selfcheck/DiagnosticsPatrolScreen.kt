@@ -6,6 +6,7 @@ import android.content.Context
 import android.widget.Toast
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -25,6 +26,7 @@ import io.github.mangi.eta.core.DiagnosticsPatrolAlarm
 import io.github.mangi.eta.core.DiagnosticsPatrolInterval
 import io.github.mangi.eta.core.DiagnosticsPatrolRules
 import io.github.mangi.eta.data.datastore.SettingsDataStore
+import io.github.mangi.eta.data.model.AppearanceUiStyle
 import io.github.mangi.eta.data.model.Settings
 import io.github.mangi.eta.ui.components.EtaArrowPreference
 import io.github.mangi.eta.ui.components.EtaPreference
@@ -33,6 +35,8 @@ import io.github.mangi.eta.ui.components.EtaPreferenceGroup
 import io.github.mangi.eta.ui.components.EtaPreferenceGroupTitle
 import io.github.mangi.eta.ui.components.EtaSwitchPreference
 import io.github.mangi.eta.ui.components.EtaWindowDialog
+import io.github.mangi.eta.ui.app.LocalUiStyle
+import io.github.mangi.eta.ui.components.coui.CouiInputDialog
 import io.github.mangi.eta.ui.components.EtaReadOnlyTextDialog
 import io.github.mangi.eta.ui.components.MiuixDialogActions
 import io.github.mangi.eta.ui.components.MiuixScaffoldPage
@@ -237,88 +241,115 @@ internal fun DiagnosticsPatrolScreen(onBack: () -> Unit) {
         )
     }
 
-    if (showIntervalDialog) {
+    val intervalTitle = stringResource(R.string.diag_patrol_interval_dialog_title)
+    val intervalSummary = stringResource(
+        R.string.diag_patrol_interval_dialog_summary,
+        DiagnosticsPatrolInterval.MIN_MINUTES,
+        DiagnosticsPatrolInterval.MAX_MINUTES,
+    )
+    val intervalLabel = stringResource(R.string.diag_patrol_interval_dialog_label)
+    val confirmText = stringResource(R.string.action_confirm)
+    fun commitInterval() {
+        val minutes = intervalInput.trim().toIntOrNull()
+        showIntervalDialog = false
+        if (minutes == null) {
+            Toast.makeText(context, R.string.diag_patrol_number_invalid, Toast.LENGTH_SHORT).show()
+        } else {
+            val value = DiagnosticsPatrolInterval.normalize(minutes)
+            scope.launch(Dispatchers.IO) {
+                SettingsDataStore.updateSettings { it.copy(diagPatrolIntervalMinutes = value) }
+                DiagnosticsPatrolAlarm.refresh(context)
+            }
+        }
+    }
+    if (LocalUiStyle.current == AppearanceUiStyle.COUI) {
+        CouiInputDialog(
+            visible = showIntervalDialog,
+            title = intervalTitle,
+            message = intervalSummary,
+            value = intervalInput,
+            onValueChange = { intervalInput = it },
+            placeholder = intervalLabel,
+            confirmText = confirmText,
+            onConfirm = ::commitInterval,
+            onDismissRequest = { showIntervalDialog = false },
+        )
+    } else if (showIntervalDialog) {
         EtaWindowDialog(
             show = true,
-            title = stringResource(R.string.diag_patrol_interval_dialog_title),
-            summary = stringResource(
-                R.string.diag_patrol_interval_dialog_summary,
-                DiagnosticsPatrolInterval.MIN_MINUTES,
-                DiagnosticsPatrolInterval.MAX_MINUTES,
-            ),
+            title = intervalTitle,
+            summary = intervalSummary,
             onDismissRequest = { showIntervalDialog = false },
         ) {
-            Column {
+            Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp)) {
                 TextField(
                     value = intervalInput,
                     onValueChange = { intervalInput = it },
-                    label = stringResource(R.string.diag_patrol_interval_dialog_label),
+                    label = intervalLabel,
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                 )
+                androidx.compose.foundation.layout.Spacer(Modifier.height(12.dp))
                 MiuixDialogActions(
-                    confirmText = stringResource(R.string.action_confirm),
+                    confirmText = confirmText,
                     onCancel = { showIntervalDialog = false },
-                    onConfirm = {
-                        val minutes = intervalInput.trim().toIntOrNull()
-                        showIntervalDialog = false
-                        if (minutes == null) {
-                            Toast.makeText(
-                                context,
-                                context.getString(R.string.diag_patrol_number_invalid),
-                                Toast.LENGTH_SHORT,
-                            ).show()
-                        } else {
-                            val value = DiagnosticsPatrolInterval.normalize(minutes)
-                            scope.launch(Dispatchers.IO) {
-                                SettingsDataStore.updateSettings { it.copy(diagPatrolIntervalMinutes = value) }
-                                DiagnosticsPatrolAlarm.refresh(context)
-                            }
-                        }
-                    },
+                    onConfirm = ::commitInterval,
                 )
             }
         }
     }
 
-    if (showKeepDialog) {
+    val keepTitle = stringResource(R.string.diag_patrol_keep_dialog_title)
+    val keepSummary = stringResource(
+        R.string.diag_patrol_keep_dialog_summary,
+        DIAG_PATROL_KEEP_MIN,
+        DIAG_PATROL_KEEP_MAX,
+    )
+    val keepLabel = stringResource(R.string.diag_patrol_keep_dialog_label)
+    fun commitKeepCount() {
+        val count = keepInput.trim().toIntOrNull()
+        showKeepDialog = false
+        if (count == null) {
+            Toast.makeText(context, R.string.diag_patrol_number_invalid, Toast.LENGTH_SHORT).show()
+        } else {
+            val value = count.coerceIn(DIAG_PATROL_KEEP_MIN, DIAG_PATROL_KEEP_MAX)
+            scope.launch(Dispatchers.IO) {
+                SettingsDataStore.updateSettings { it.copy(diagPatrolKeepCount = value) }
+            }
+        }
+    }
+    if (LocalUiStyle.current == AppearanceUiStyle.COUI) {
+        CouiInputDialog(
+            visible = showKeepDialog,
+            title = keepTitle,
+            message = keepSummary,
+            value = keepInput,
+            onValueChange = { keepInput = it },
+            placeholder = keepLabel,
+            confirmText = confirmText,
+            onConfirm = ::commitKeepCount,
+            onDismissRequest = { showKeepDialog = false },
+        )
+    } else if (showKeepDialog) {
         EtaWindowDialog(
             show = true,
-            title = stringResource(R.string.diag_patrol_keep_dialog_title),
-            summary = stringResource(
-                R.string.diag_patrol_keep_dialog_summary,
-                DIAG_PATROL_KEEP_MIN,
-                DIAG_PATROL_KEEP_MAX,
-            ),
+            title = keepTitle,
+            summary = keepSummary,
             onDismissRequest = { showKeepDialog = false },
         ) {
-            Column {
+            Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp)) {
                 TextField(
                     value = keepInput,
                     onValueChange = { keepInput = it },
-                    label = stringResource(R.string.diag_patrol_keep_dialog_label),
+                    label = keepLabel,
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                 )
+                androidx.compose.foundation.layout.Spacer(Modifier.height(12.dp))
                 MiuixDialogActions(
-                    confirmText = stringResource(R.string.action_confirm),
+                    confirmText = confirmText,
                     onCancel = { showKeepDialog = false },
-                    onConfirm = {
-                        val count = keepInput.trim().toIntOrNull()
-                        showKeepDialog = false
-                        if (count == null) {
-                            Toast.makeText(
-                                context,
-                                context.getString(R.string.diag_patrol_number_invalid),
-                                Toast.LENGTH_SHORT,
-                            ).show()
-                        } else {
-                            val value = count.coerceIn(DIAG_PATROL_KEEP_MIN, DIAG_PATROL_KEEP_MAX)
-                            scope.launch(Dispatchers.IO) {
-                                SettingsDataStore.updateSettings { it.copy(diagPatrolKeepCount = value) }
-                            }
-                        }
-                    },
+                    onConfirm = ::commitKeepCount,
                 )
             }
         }

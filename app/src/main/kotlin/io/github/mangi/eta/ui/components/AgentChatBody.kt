@@ -1,5 +1,6 @@
 package io.github.mangi.eta.ui.components
 
+
 import androidx.compose.foundation.text.input.rememberTextFieldState
 import io.github.mangi.eta.ui.components.custom.LocalCustomComposer
 import io.github.mangi.eta.ui.components.custom.LocalCustomContinue
@@ -125,6 +126,7 @@ import io.github.mangi.eta.ui.model.AgentPaletteEntry
 import io.github.mangi.eta.ui.model.ToolAccessUiState
 import io.github.mangi.eta.ui.model.ToolToggleItem
 import io.github.mangi.eta.ui.model.AgentContextUsageUi
+import io.github.mangi.eta.ui.model.StreamingTokenEstimateTracker
 import io.github.mangi.eta.ui.model.AgentMessageUi
 import io.github.mangi.eta.ui.model.MessageReferenceUi
 import io.github.mangi.eta.ui.model.messageReference
@@ -295,11 +297,20 @@ internal fun AgentChatBody(
     val isKeyboardVisible = imeBottomPx > 0
     val browserSnapshot = LocalAgentBrowserSession.current?.snapshots?.collectAsState()?.value
         ?: BrowserSessionSnapshot()
+    val streamingTokenTracker = remember { StreamingTokenEstimateTracker() }
+    val streamingAssistant = remember(messages) {
+        messages.asReversed().filterIsInstance<AgentMessageUi>().firstOrNull { it.isStreaming }
+    }
+    val streamingOutputTokensEstimate = remember(messages) {
+        streamingTokenTracker.update(streamingAssistant?.id, streamingAssistant?.content)
+    }
     val contextUsage = remember(messages, modelPickerState.selectedModel) {
         val usage = latestContextUsage(messages, modelPickerState.selectedModel)
         val latest = messages.asReversed().filterIsInstance<AgentMessageUi>().firstOrNull { it.usage != null }?.usage
-        usage.copy(averageTokensPerSecond = latest?.generationTokensPerSecond ?: latest?.averageTokensPerSecond,
-            latestUsage = usage.latestUsage ?: latest)
+        usage.copy(
+            averageTokensPerSecond = latest?.generationTokensPerSecond ?: latest?.averageTokensPerSecond,
+            latestUsage = usage.latestUsage ?: latest,
+        )
     }
     val currentBrowserMessageId = remember(
         visibleMessages,
@@ -360,6 +371,7 @@ internal fun AgentChatBody(
                 isCompacting = isCompacting,
                 isBranching = isBranching,
                 contextUsage = contextUsage,
+                streamingOutputTokensEstimate = streamingOutputTokensEstimate,
                 isStreaming = isStreaming,
                 reasoningEffort = reasoningEffort,
                 availableReasoningEfforts = availableReasoningEfforts,
@@ -468,6 +480,7 @@ private fun AgentChatScaffold(
     isCompacting: Boolean,
     isBranching: Boolean,
     contextUsage: AgentContextUsageUi,
+    streamingOutputTokensEstimate: Int,
     isStreaming: Boolean,
     reasoningEffort: ReasoningEffort,
     availableReasoningEfforts: List<ReasoningEffort>,
@@ -587,6 +600,7 @@ private fun AgentChatScaffold(
                 onOpenModelProviders = onOpenModelProviders,
                 isCompacting = isCompacting,
                 contextUsage = contextUsage,
+                streamingOutputTokensEstimate = streamingOutputTokensEstimate,
                 showContextUsage = hasMessages,
                 isStreaming = isStreaming,
                 reasoningEffort = reasoningEffort,
@@ -1497,6 +1511,7 @@ private fun AgentChatBottomBar(
     onOpenModelProviders: () -> Unit = {},
     isCompacting: Boolean,
     contextUsage: AgentContextUsageUi,
+    streamingOutputTokensEstimate: Int,
     showContextUsage: Boolean,
     isStreaming: Boolean,
     reasoningEffort: ReasoningEffort,
@@ -1612,6 +1627,7 @@ private fun AgentChatBottomBar(
                 onOpenModelProviders = onOpenModelProviders,
                 isCompacting = isCompacting,
                 contextUsage = contextUsage,
+                streamingOutputTokensEstimate = streamingOutputTokensEstimate,
                 showContextUsage = showContextUsage,
                 isStreaming = isStreaming,
                 reasoningEffort = reasoningEffort,

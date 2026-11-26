@@ -3,7 +3,10 @@ package io.github.mangi.eta.ui.components
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.runtime.Composable
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.res.stringResource
 import io.github.mangi.eta.R
 import top.yukonga.miuix.kmp.basic.Icon
@@ -17,7 +20,7 @@ fun MiuixBackButton(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    IconButton(onClick = onClick, modifier = modifier) {
+    IconButton(onClick = onClick, modifier = modifier.clip(RoundedCornerShape(12.dp))) {
         Icon(
             imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
             contentDescription = stringResource(R.string.action_back),

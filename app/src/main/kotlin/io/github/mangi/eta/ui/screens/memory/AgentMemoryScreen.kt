@@ -99,7 +99,7 @@ internal fun AgentMemoryScreen(
     onAction: (AgentMemoryAction) -> Unit,
     onOpenDocument: () -> Unit = {},
 ) {
-    state.notice?.let { notice ->
+    if (rememberMemoryNoticeVisibility(state.notice != null)) state.notice?.let { notice ->
         when (LocalUiStyle.current) {
             AppearanceUiStyle.COUI -> {
                 CouiNoticeDialog(
@@ -308,7 +308,7 @@ internal fun MemoryDocumentScreen(
         }
     }
 
-    state.notice?.let { notice ->
+    if (rememberMemoryNoticeVisibility(state.notice != null)) state.notice?.let { notice ->
         when (LocalUiStyle.current) {
             AppearanceUiStyle.COUI -> {
                 CouiNoticeDialog(

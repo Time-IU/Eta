@@ -420,6 +420,29 @@ internal fun deriveSessionStatsSummary(messages: List<AgentChatMessageUi>): Sess
     )
 }
 
+internal fun formatCacheHitRate(cachedTokens: Int, promptTokens: Int, locale: Locale = Locale.getDefault()): String? {
+    if (cachedTokens < 0 || promptTokens <= 0) return null
+    val rate = (cachedTokens.toDouble() / promptTokens.toDouble() * 100.0).coerceIn(0.0, 100.0)
+    return NumberFormat.getNumberInstance(locale).apply {
+        minimumFractionDigits = if (rate == rate.toLong().toDouble()) 0 else 1
+        maximumFractionDigits = 1
+    }.format(rate) + "%"
+}
+
+internal fun formatContextSnapshot(
+    contextTokens: Int?,
+    contextWindow: Int?,
+    locale: Locale = Locale.getDefault(),
+): String? {
+    if (contextTokens == null || contextTokens < 0 || contextWindow == null || contextWindow <= 0) return null
+    return "${formatCompactTokenCount(contextTokens, locale)}/${formatCompactTokenCount(contextWindow, locale)}"
+}
+
+internal fun estimateStreamingTokensPerSecond(tokens: Int, elapsedMs: Long): Double? {
+    if (tokens <= 0 || elapsedMs <= 0L) return null
+    return tokens * 1000.0 / elapsedMs
+}
+
 internal fun contextUsageProgress(contextTokens: Int?, contextWindow: Int?): Float? {
     if (contextTokens == null || contextTokens < 0 || contextWindow == null || contextWindow <= 0) {
         return null

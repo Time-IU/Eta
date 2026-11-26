@@ -182,6 +182,38 @@ class AgentModelPickerProjectorTest {
     }
 
     @Test
+    fun cacheHitRateFormattingUsesPromptTotalAndUnknownWhenUnavailable() {
+        assertEquals("50%", formatCacheHitRate(500, 1_000, java.util.Locale.US))
+        assertEquals("12.5%", formatCacheHitRate(1_000, 8_000, java.util.Locale.US))
+        assertNull(formatCacheHitRate(0, 0, java.util.Locale.US))
+        assertNull(formatCacheHitRate(-1, 1_000, java.util.Locale.US))
+    }
+
+    @Test
+    fun contextSnapshotUsesCompactCountsWithNoSpacesOrPercentage() {
+        assertEquals("515.96K/1M", formatContextSnapshot(515_960, 1_000_000, java.util.Locale.US))
+        assertNull(formatContextSnapshot(null, 1_000_000, java.util.Locale.US))
+        assertNull(formatContextSnapshot(12, 0, java.util.Locale.US))
+    }
+
+    @Test
+    fun streamingTokenEstimateTrackerCountsOnlyNewTextAndResetsPerMessage() {
+        val tracker = StreamingTokenEstimateTracker()
+        assertEquals(2, tracker.update("assistant-a", "hello"))
+        assertEquals(3, tracker.update("assistant-a", "hello world"))
+        assertEquals(7, tracker.update("assistant-a", "hello world你好世界"))
+        assertEquals(1, tracker.update("assistant-b", "ok"))
+        assertEquals(0, tracker.update(null, null))
+    }
+
+    @Test
+    fun streamingRateUsesEstimatedTokenDeltaAndElapsedWindow() {
+        assertEquals(40.0, requireNotNull(estimateStreamingTokensPerSecond(20, 500)), 0.001)
+        assertNull(estimateStreamingTokensPerSecond(0, 500))
+        assertNull(estimateStreamingTokensPerSecond(20, 0))
+    }
+
+    @Test
     fun contextUsageProgress_handlesMissingInvalidAndOverflowValues() {
         assertNull(contextUsageProgress(null, 100_000))
         assertNull(contextUsageProgress(10_000, null))

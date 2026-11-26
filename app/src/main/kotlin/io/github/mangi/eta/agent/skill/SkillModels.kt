@@ -56,10 +56,3 @@ data class SkillContext(
         val EMPTY = SkillContext()
     }
 }
-
-/** SKILL.md 文件解析结果。 */
-internal data class ParsedSkillFile(
-    val frontmatter: Map<String, String>,
-    val body: String,
-    val revision: String = "",
-)

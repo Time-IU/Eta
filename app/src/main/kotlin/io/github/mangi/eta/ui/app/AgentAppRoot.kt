@@ -499,6 +499,9 @@ fun AgentAppRoot(
                 workspaceSheetOpen = true
             },
             onWorkspaceDismiss = { workspaceSheetOpen = false },
+            edgeWidthDp = io.github.mangi.eta.ui.app.LocalAppearanceSettings.current.conversationPaneEdgeWidthDp,
+            gestureSensitivity = io.github.mangi.eta.ui.app.LocalAppearanceSettings.current.gestureSensitivity,
+            commitThresholdPercent = io.github.mangi.eta.ui.app.LocalAppearanceSettings.current.conversationPaneCommitThresholdPercent,
             workspaceContent = {
                 WorkspaceBrowserSheet(
                     visible = true,
@@ -600,7 +603,7 @@ fun AgentAppRoot(
         NavSwipeDirection.LeftToRight
     }
     val swipeDismiss = swipeBackDirection.takeIf {
-        LocalAppearanceSettings.current.swipeDismissEnabled
+        io.github.mangi.eta.ui.app.LocalAppearanceSettings.current.swipeDismissEnabled
     }
     key(navigationResetKey) {
         NavDisplay(
@@ -1188,13 +1191,14 @@ fun AgentAppRoot(
                 io.github.mangi.eta.ui.screens.memory.MemoryDocumentScreen(
                     state = memory.memoryState,
                     onAction = { action ->
-                        when (action) {
-                            is AgentMemoryAction.DraftChanged -> memory.updateMemoryDraft(action.content)
-                            AgentMemoryAction.Save -> memory.saveMemory()
-                            AgentMemoryAction.Clear -> memory.clearMemory()
-                            AgentMemoryAction.NavigateBack -> popRoute()
-                            else -> Unit
-                        }
+                        dispatchMemoryDocumentAction(
+                            action = action,
+                            onDraftChanged = memory::updateMemoryDraft,
+                            onSave = memory::saveMemory,
+                            onClear = memory::clearMemory,
+                            onNavigateBack = ::popRoute,
+                            onDismissNotice = memory::dismissMemoryNotice,
+                        )
                     },
                 )
             }

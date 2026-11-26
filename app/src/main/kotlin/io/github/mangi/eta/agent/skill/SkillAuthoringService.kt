@@ -140,6 +140,3 @@ internal class SkillAuthoringService(
         private const val MAX_RESOURCE_BYTES = 4L * 1024L * 1024L
     }
 }
-
-internal fun skillRevision(bytes: ByteArray): String = MessageDigest.getInstance("SHA-256")
-    .digest(bytes).joinToString("") { "%02x".format(it) }

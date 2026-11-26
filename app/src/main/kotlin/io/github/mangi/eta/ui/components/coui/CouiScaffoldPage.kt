@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.RowScope
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
@@ -83,11 +84,16 @@ internal fun rememberCouiSystemToolbarStyle(
     val contour = LocalCouiContourGlowEnabled.current
     val textStyle = rememberCouiTextStyle(CouiTextKind.TopBar)
     return CouiTopAppBarButtonDefaults.style(dark).copy(
+        circleShape = RoundedCornerShape(12.dp),
         contentColor = colors.title,
         textStyle = textStyle,
         cursorColor = colors.accent,
         material = { CouiTopAppBarButtonDefaults.systemMaterial(dark, it) },
-        shadow = { CouiTopAppBarButtonDefaults.shadow(dark, it, density, contour, alphaScale = 1f) },
+        shadow = {
+            CouiTopAppBarButtonDefaults.shadow(dark, it, density, contour, alphaScale = 1f)
+                .copy(smoothCorner = true)
+        },
+
     )
 }
 
@@ -153,7 +159,7 @@ internal fun CouiTopAppBarIconButton(
         Box(
             modifier = modifier
                 .size(48.dp)
-                .clip(CouiShape(24.dp, 2f))
+                .clip(RoundedCornerShape(12.dp))
                 .couiButtonFeedback(dark, source, enabled)
                 .clickable(source, indication = null, enabled = enabled, role = Role.Button, onClick = onClick)
                 .then(

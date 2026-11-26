@@ -57,6 +57,8 @@ import io.github.mangi.eta.core.safeLogType
 import io.github.mangi.eta.core.safeStackTrace
 import io.github.mangi.eta.data.model.AppearanceUiStyle
 import io.github.mangi.eta.data.repository.EtaBackupSummary
+import io.github.mangi.eta.data.repository.EtaUserExtensionsBackup
+import io.github.mangi.eta.data.repository.UserExtensionInventory
 import io.github.mangi.eta.ui.app.LocalUiStyle
 import io.github.mangi.eta.ui.components.MiuixDialogActions
 import io.github.mangi.eta.ui.components.MiuixScaffoldPage
@@ -89,6 +91,13 @@ internal fun DataBackupScreen(
     var busy by remember { mutableStateOf(false) }
     var pendingImportUri by remember { mutableStateOf<Uri?>(null) }
     var showImportDialog by remember { mutableStateOf(false) }
+    var extensionInventory by remember { mutableStateOf<UserExtensionInventory?>(null) }
+    var showExtensionDialog by remember { mutableStateOf(false) }
+    var extensionDialogIsImport by remember { mutableStateOf(false) }
+    var extensionImportUri by remember { mutableStateOf<Uri?>(null) }
+    var extensionExportSelection by remember { mutableStateOf<Pair<Set<String>, Set<String>>?>(null) }
+    var selectedExtensionSkills by remember { mutableStateOf<Set<String>>(emptySet()) }
+    var selectedExtensionSubagents by remember { mutableStateOf<Set<String>>(emptySet()) }
 
     val settings by SettingsDataStore.settingsFlow().collectAsState(initial = Settings())
     var autoBusy by remember { mutableStateOf(false) }
@@ -154,6 +163,94 @@ internal fun DataBackupScreen(
         if (uri != null) {
             pendingImportUri = uri
             showImportDialog = true
+        }
+    }
+
+    val extensionsExportLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("application/zip"),
+    ) { uri ->
+        val selection = extensionExportSelection
+        if (uri != null && selection != null) scope.launch {
+            busy = true
+            try {
+                val output = context.contentResolver.openOutputStream(uri)
+                    ?: error(context.getString(R.string.data_backup_file_open_failed))
+                withContext(Dispatchers.IO) {
+                    output.use { EtaUserExtensionsBackup.export(context, it, selection.first, selection.second) }
+                }
+                Toast.makeText(context, context.getString(R.string.data_backup_extensions_exported,
+                    selection.first.size, selection.second.size), Toast.LENGTH_SHORT).show()
+            } catch (failure: Throwable) { showFailure(failure) }
+            finally { busy = false; extensionExportSelection = null }
+        } else {
+            extensionExportSelection = null
+        }
+    }
+    val extensionsImportLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument(),
+    ) { uri ->
+        if (uri != null) scope.launch {
+            busy = true
+            try {
+                val input = context.contentResolver.openInputStream(uri)
+                    ?: error(context.getString(R.string.data_backup_file_open_failed))
+                val inventory = withContext(Dispatchers.IO) { input.use { EtaUserExtensionsBackup.inspect(context, it) } }
+                extensionImportUri = uri
+                extensionInventory = inventory
+                selectedExtensionSkills = inventory.skills.filterNot { it.conflict }.mapTo(linkedSetOf()) { it.id }
+                selectedExtensionSubagents = inventory.subagents.filterNot { it.conflict }.mapTo(linkedSetOf()) { it.id }
+                extensionDialogIsImport = true
+                showExtensionDialog = true
+            } catch (failure: Throwable) { showFailure(failure) }
+            finally { busy = false }
+        }
+    }
+
+    val extensionBackupContent: @Composable () -> Unit = {
+        val exportAction: () -> Unit = {
+            scope.launch {
+                busy = true
+                try {
+                    val available = withContext(Dispatchers.IO) { EtaUserExtensionsBackup.available(context) }
+                    extensionInventory = available
+                    selectedExtensionSkills = available.skills.mapTo(linkedSetOf()) { it.id }
+                    selectedExtensionSubagents = available.subagents.mapTo(linkedSetOf()) { it.id }
+                    extensionDialogIsImport = false
+                    showExtensionDialog = true
+                } catch (failure: Throwable) { showFailure(failure) }
+                finally { busy = false }
+            }
+        }
+        when (LocalUiStyle.current) {
+            AppearanceUiStyle.COUI -> {
+                CouiPreference(
+                    title = stringResource(R.string.data_backup_extensions_export),
+                    summary = stringResource(R.string.data_backup_extensions_export_summary),
+                    enabled = !busy,
+                    onClick = exportAction,
+                )
+                Divider()
+                CouiPreference(
+                    title = stringResource(R.string.data_backup_extensions_import),
+                    summary = stringResource(R.string.data_backup_extensions_import_summary),
+                    enabled = !busy,
+                    onClick = { extensionsImportLauncher.launch(arrayOf("application/zip", "application/x-zip-compressed")) },
+                )
+            }
+            AppearanceUiStyle.MIUIX -> {
+                ArrowPreference(
+                    title = stringResource(R.string.data_backup_extensions_export),
+                    summary = stringResource(R.string.data_backup_extensions_export_summary),
+                    enabled = !busy,
+                    onClick = exportAction,
+                )
+                ArrowPreference(
+                    title = stringResource(R.string.data_backup_extensions_import),
+                    summary = stringResource(R.string.data_backup_extensions_import_summary),
+                    enabled = !busy,
+                    onClick = { extensionsImportLauncher.launch(arrayOf("application/zip", "application/x-zip-compressed")) },
+                )
+            }
         }
     }
 
@@ -340,6 +437,7 @@ internal fun DataBackupScreen(
                         },
                     )
                 }
+                Group(title = stringResource(R.string.data_backup_extensions_title)) { extensionBackupContent() }
                 Group(title = stringResource(R.string.data_backup_auto)) { autoBackupContent() }
                 CouiPageBottomSpacer()
             }
@@ -395,6 +493,10 @@ internal fun DataBackupScreen(
                             },
                         )
                     }
+                }
+                item(key = "extensions_backup") {
+                    SmallTitle(stringResource(R.string.data_backup_extensions_title))
+                    Card(modifier = Modifier.padding(horizontal = 12.dp).padding(bottom = 12.dp)) { extensionBackupContent() }
                 }
                 item(key = "auto_backup") {
                     SmallTitle(stringResource(R.string.data_backup_auto))
@@ -466,6 +568,54 @@ internal fun DataBackupScreen(
             },
         )
     }
+
+    UserExtensionsSelectionDialog(
+        visible = showExtensionDialog,
+        inventory = extensionInventory,
+        selectedSkills = selectedExtensionSkills,
+        selectedSubagents = selectedExtensionSubagents,
+        busy = busy,
+        onToggleSkill = { id -> selectedExtensionSkills = selectedExtensionSkills.toMutableSet().apply {
+            if (!add(id)) remove(id)
+        } },
+        onToggleSubagent = { id -> selectedExtensionSubagents = selectedExtensionSubagents.toMutableSet().apply {
+            if (!add(id)) remove(id)
+        } },
+        onDismiss = {
+            showExtensionDialog = false
+            extensionImportUri = null
+        },
+        onConfirm = {
+            val skills = selectedExtensionSkills.toSet()
+            val subagents = selectedExtensionSubagents.toSet()
+            if (!extensionDialogIsImport) {
+                extensionDialogIsImport = false
+                extensionExportSelection = skills to subagents
+                showExtensionDialog = false
+                extensionsExportLauncher.launch(defaultExtensionsFileName())
+            } else {
+                val uri = extensionImportUri
+                if (uri != null) scope.launch {
+                    busy = true
+                    try {
+                        val input = context.contentResolver.openInputStream(uri)
+                            ?: error(context.getString(R.string.data_backup_file_open_failed))
+                        val result = withContext(Dispatchers.IO) {
+                            input.use { EtaUserExtensionsBackup.importSelected(context, it, skills, subagents) }
+                        }
+                        val skipped = result.skippedConflicts.size
+                        Toast.makeText(context, context.getString(
+                            R.string.data_backup_extensions_imported,
+                            result.installedSkills, result.installedSubagents, skipped,
+                        ), Toast.LENGTH_LONG).show()
+                        showExtensionDialog = false
+                        extensionImportUri = null
+                    } catch (failure: Throwable) { showFailure(failure) }
+                    finally { busy = false }
+                }
+            }
+        },
+    )
 
     if (showImportDialog) {
         val confirmText = if (busy) {
@@ -544,6 +694,9 @@ internal fun DataBackupScreen(
 
 private fun defaultBackupFileName(): String =
     "Eta-backup-${SimpleDateFormat("yyyyMMdd-HHmm", Locale.US).format(Date())}.eta-backup.json"
+
+private fun defaultExtensionsFileName(): String =
+    "Eta-extensions-${SimpleDateFormat("yyyyMMdd-HHmm", Locale.US).format(Date())}.eta-extensions.zip"
 
 @Composable
 private fun BackupIcon(icon: ImageVector, loading: Boolean) {

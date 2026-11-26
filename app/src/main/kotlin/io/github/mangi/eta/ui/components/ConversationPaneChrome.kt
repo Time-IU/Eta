@@ -38,6 +38,7 @@ import androidx.compose.foundation.layout.union
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.input.TextFieldLineLimits
 import androidx.compose.foundation.text.input.clearText
@@ -359,9 +360,9 @@ private fun PaneNewChatButton(
                 Box(
                     modifier = Modifier
                         .size(40.dp)
-                        .clip(CircleShape)
-                        .background(if (dark) Color(0xFF252830) else Color.White, CircleShape)
-                        .border(0.5.dp, if (dark) Color(0x1EFFFFFF) else Color(0x12000000), CircleShape)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(if (dark) Color(0xFF252830) else Color.White, RoundedCornerShape(12.dp))
+                        .border(0.5.dp, if (dark) Color(0x1EFFFFFF) else Color(0x12000000), RoundedCornerShape(12.dp))
                         .couiButtonFeedback(dark, source, enabled = true)
                         .clickable(
                             interactionSource = source,
@@ -390,10 +391,10 @@ private fun PaneNewChatButton(
                 minWidth = 40.dp,
                 minHeight = 40.dp,
                 backgroundColor = bg.copy(alpha = if (isDark) 0.85f else 0.92f),
-                modifier = Modifier.border(
+                modifier = Modifier.clip(RoundedCornerShape(12.dp)).border(
                     width = 0.5.dp,
                     color = colors.outline.copy(alpha = if (isDark) 0.36f else 0.22f),
-                    shape = CircleShape,
+                    shape = RoundedCornerShape(12.dp),
                 ),
             ) {
                 Icon(
@@ -918,7 +919,7 @@ private fun PaneDockCircleButton(
         if (isCoui) {
             CouiPaneFloatingSurface(
                 modifier = Modifier.fillMaxSize(),
-                shape = CouiTopAppBarButtonDefaults.circleShape,
+                shape = RoundedCornerShape(12.dp),
                 capsule = false,
                 couiBackdrop = couiBackdrop,
                 focused = false,
@@ -942,7 +943,7 @@ private fun PaneDockCircleButton(
                 modifier = Modifier
                     .fillMaxSize()
                     .dropShadow(
-                        shape = CircleShape,
+                        shape = RoundedCornerShape(12.dp),
                         shadow = Shadow(
                             radius = 10.dp,
                             color = Color.Black,
@@ -957,7 +958,8 @@ private fun PaneDockCircleButton(
                     backgroundColor = bgColor,
                     modifier = Modifier
                         .fillMaxSize()
-                        .border(0.5.dp, borderColor, CircleShape),
+                        .clip(RoundedCornerShape(12.dp))
+                        .border(0.5.dp, borderColor, RoundedCornerShape(12.dp)),
                 ) {
                     Icon(
                         imageVector = icon,

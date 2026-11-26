@@ -11,11 +11,9 @@ import androidx.compose.foundation.gestures.AnchoredDraggableState
 import androidx.compose.foundation.gestures.DraggableAnchors
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.foundation.gestures.awaitHorizontalTouchSlopOrCancellation
-import androidx.compose.foundation.gestures.horizontalDrag
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.PointerEventPass
-import androidx.compose.ui.input.pointer.positionChange
+import androidx.compose.ui.input.pointer.positionChangeIgnoreConsumed
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.foundation.gestures.animateTo
 import androidx.compose.foundation.layout.Box
@@ -74,7 +72,6 @@ private object ConversationPaneMetrics {
     const val SettleDampingRatio = 1f
     const val SettleStiffness = 146f
     const val SettleVisibilityThresholdPx = 0.5f
-    const val SettlePositionThresholdFraction = 0.5f
 }
 
 @Composable
@@ -117,16 +114,22 @@ fun ConversationSidePaneScaffold(
     onWorkspaceOpen: () -> Unit = {},
     onWorkspaceDismiss: () -> Unit = {},
     workspaceContent: (@Composable () -> Unit)? = null,
+    edgeWidthDp: Int = io.github.mangi.eta.data.model.DEFAULT_CONVERSATION_PANE_EDGE_WIDTH_DP,
+    gestureSensitivity: Float = io.github.mangi.eta.data.model.DEFAULT_GESTURE_SENSITIVITY,
+    commitThresholdPercent: Float = io.github.mangi.eta.data.model.DEFAULT_CONVERSATION_PANE_COMMIT_THRESHOLD_PERCENT,
     content: @Composable () -> Unit,
 ) {
     val sceneLifecycleState by LocalLifecycleOwner.current.lifecycle.currentStateFlow.collectAsState()
     val navigationEventState = rememberNavigationEventState(NavigationEventInfo.None)
 
     BoxWithConstraints(modifier = modifier.fillMaxSize()) {
-        val screenWidthPx = constraints.maxWidth.toFloat()
         val selectionLock = remember { ChatSelectionLock() }
-        val edgeWidth = with(LocalDensity.current) { 24.dp.toPx() }
         val density = LocalDensity.current
+        val screenWidthDp = maxWidth.value.toInt()
+        val effectiveGestureStartWidthDp = ConversationPaneEdgeWidthPolicy.effectiveWidth(edgeWidthDp, screenWidthDp)
+        val gestureStartWidth = with(density) { effectiveGestureStartWidthDp.dp.toPx() }
+        val sensitivity by rememberUpdatedState(gestureSensitivity)
+        val currentCommitThreshold by rememberUpdatedState(commitThresholdPercent)
         val paneWidth = minOf(maxWidth * ConversationPaneMetrics.PaneWidthFraction, ConversationPaneMetrics.PaneMaxWidth)
         val paneWidthPx = with(density) { paneWidth.toPx() }
         val anchors = remember(paneWidthPx) {
@@ -155,13 +158,6 @@ fun ConversationSidePaneScaffold(
         val currentHapticFeedback by rememberUpdatedState(hapticFeedback)
         val dragInteractions = remember { MutableInteractionSource() }
         val isDragging by dragInteractions.collectIsDraggedAsState()
-        LaunchedEffect(dragInteractions) {
-            dragInteractions.interactions.collect { interaction ->
-                if (interaction is DragInteraction.Stop) {
-                    currentHapticFeedback.performHapticFeedback(HapticFeedbackType.GestureEnd)
-                }
-            }
-        }
         val isRevealed by remember(paneDragState) {
             derivedStateOf {
                 val offset = paneDragState.offset
@@ -229,42 +225,100 @@ fun ConversationSidePaneScaffold(
             onBackCompleted = { if (workspaceVisible) onWorkspaceDismiss() else closePane() },
         )
 
+        suspend fun androidx.compose.ui.input.pointer.AwaitPointerEventScope.awaitHorizontalIntentOrCancellation(
+            pointerId: androidx.compose.ui.input.pointer.PointerId,
+            touchSlop: Float,
+            onTouchSlopReached: (androidx.compose.ui.input.pointer.PointerInputChange, Float) -> Unit,
+        ): androidx.compose.ui.input.pointer.PointerInputChange? {
+            var totalX = 0f
+            var totalY = 0f
+            while (true) {
+                val event = awaitPointerEvent(PointerEventPass.Initial)
+                val change = event.changes.firstOrNull { it.id == pointerId } ?: return null
+                if (!change.pressed) return null
+                val delta = change.positionChangeIgnoreConsumed()
+                totalX += delta.x
+                totalY += delta.y
+                if (ChatGesturePolicy.shouldClaimHorizontal(totalX, totalY, touchSlop)) {
+                    onTouchSlopReached(change, totalX)
+                    return change
+                }
+            }
+        }
+
         Box(
             modifier = Modifier.fillMaxSize()
                 .clipToBounds()
                 .background(conversationPaneContainerColor())
-                // Only an edge-origin right swipe opens history. No left-swipe workspace anchor.
-                // Initial-pass observation never consumes a down; native text selection gets priority.
-                .pointerInput(paneDragState, paneWidthPx, edgeWidth, backHandlerEnabled, sceneLifecycleState, workspaceVisible) {
+                // Full content width can start a horizontal history swipe. Native slop arbitration
+                // leaves child text selection and vertical scrolling intact until horizontal intent wins.
+                .pointerInput(paneDragState, paneWidthPx, gestureStartWidth, backHandlerEnabled, sceneLifecycleState, workspaceVisible) {
                     awaitEachGesture {
                         val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
                         val openAtStart = currentVisible || paneDragState.offset > 0.5f
-                        if (!ChatGesturePolicy.canStart(down.position.x, edgeWidth, openAtStart,
+                        if (!ChatGesturePolicy.canStart(down.position.x, gestureStartWidth, openAtStart,
                                 selectionLock.active, workspaceVisible,
                                 backHandlerEnabled && sceneLifecycleState == Lifecycle.State.RESUMED)) return@awaitEachGesture
                         var initialDelta = 0f
-                        val slop = awaitHorizontalTouchSlopOrCancellation(down.id) { change, over ->
+                        var acceptedHorizontalIntent = false
+                        val touchSlop = viewConfiguration.touchSlop
+                        val slop = awaitHorizontalIntentOrCancellation(down.id, touchSlop) { change, over ->
                             if (!selectionLock.active && ChatGesturePolicy.acceptsInitialDelta(over, openAtStart)) {
-                                initialDelta = over
+                                acceptedHorizontalIntent = true
+                                initialDelta = ChatGesturePolicy.scaledDragDelta(over, sensitivity)
                                 change.consume()
                             }
                         } ?: return@awaitEachGesture
-                        if (selectionLock.active) return@awaitEachGesture
+                        if (!acceptedHorizontalIntent || selectionLock.active) return@awaitEachGesture
                         val interaction = DragInteraction.Start()
                         dragInteractions.tryEmit(interaction)
+                        var thresholdReached = false
+                        fun maybeCueCommit(previousOffset: Float, currentOffset: Float) {
+                            if (!thresholdReached && ChatGesturePolicy.crossedCommitThreshold(
+                                    previousOffset = previousOffset,
+                                    currentOffset = currentOffset,
+                                    width = paneWidthPx,
+                                    panelWasOpen = openAtStart,
+                                    commitThresholdPercent = currentCommitThreshold,
+                                )
+                            ) {
+                                thresholdReached = true
+                                currentHapticFeedback.performHapticFeedback(HapticFeedbackType.GestureEnd)
+                            }
+                        }
+                        var previousOffset = paneDragState.offset
                         paneDragState.dispatchRawDelta(initialDelta)
-                        val completed = horizontalDrag(slop.id) { change ->
-                            if (!selectionLock.active) {
-                                paneDragState.dispatchRawDelta(change.positionChange().x)
+                        maybeCueCommit(previousOffset, paneDragState.offset)
+                        var completed = true
+                        while (true) {
+                            val event = awaitPointerEvent(PointerEventPass.Initial)
+                            val change = event.changes.firstOrNull { it.id == slop.id }
+                            if (change == null || !change.pressed) break
+                            if (selectionLock.active) {
+                                completed = false
+                                break
+                            }
+                            val delta = change.positionChangeIgnoreConsumed()
+                            if (delta.x != 0f) {
+                                previousOffset = paneDragState.offset
+                                paneDragState.dispatchRawDelta(
+                                    ChatGesturePolicy.scaledDragDelta(delta.x, sensitivity),
+                                )
+                                maybeCueCommit(previousOffset, paneDragState.offset)
                                 change.consume()
                             }
                         }
                         dragInteractions.tryEmit(if (completed && !selectionLock.active)
                             DragInteraction.Stop(interaction) else DragInteraction.Cancel(interaction))
-                        val target = if (completed && !selectionLock.active)
-                            ChatGesturePolicy.settleOpen(paneDragState.offset, paneWidthPx) else openAtStart
-                        scope.launch { paneDragState.animateTo(if (target) ConversationPaneAnchor.Open else
-                            ConversationPaneAnchor.Closed, settleAnimation) }
+                        val commit = completed && !selectionLock.active && ChatGesturePolicy.isBeyondCommitThreshold(
+                            offset = paneDragState.offset,
+                            width = paneWidthPx,
+                            panelWasOpen = openAtStart,
+                            commitThresholdPercent = currentCommitThreshold,
+                        )
+                        val target = if (commit) !openAtStart else openAtStart
+                        val targetAnchor = if (target) ConversationPaneAnchor.Open else ConversationPaneAnchor.Closed
+                        scope.launch { paneDragState.animateTo(targetAnchor, settleAnimation) }
                     }
                 },
             contentAlignment = AbsoluteAlignment.TopLeft,

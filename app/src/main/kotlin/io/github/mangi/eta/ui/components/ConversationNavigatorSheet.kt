@@ -124,7 +124,12 @@ internal fun ConversationNavigatorSheet(
                     )
                 }
                 items(count = entries.size, key = { index ->
-                    entries[index].messageId + ":" + if (query.isBlank()) "outline" else rows.getOrNull(index)?.hit?.start
+                    conversationNavigatorRowKey(
+                        index = index,
+                        messageId = entries[index].messageId,
+                        queryBlank = query.isBlank(),
+                        hitStart = rows.getOrNull(index)?.hit?.start,
+                    )
                 }) { index ->
                     val entry = entries[index]
                     ConversationNavRow(
@@ -144,6 +149,24 @@ internal fun ConversationNavigatorSheet(
             )
         }
     }
+}
+
+/**
+ * A message can legitimately produce multiple navigator rows (for example, duplicate
+ * search hits or repeated outline projections). The item index is part of the key so
+ * LazyColumn never receives two equal keys during async search/paging updates.
+ */
+internal fun conversationNavigatorRowKey(
+    index: Int,
+    messageId: String,
+    queryBlank: Boolean,
+    hitStart: Int?,
+): String = buildString {
+    append(index)
+    append(':')
+    append(messageId)
+    append(':')
+    if (queryBlank) append("outline") else append(hitStart ?: "unknown")
 }
 
 @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)

@@ -28,6 +28,7 @@ internal data class ToolAccessUiState(
 ) {
     val mcpItems: List<ToolToggleItem> get() = items.filter { it.kind == ToolToggleKind.Mcp }
     val skillItems: List<ToolToggleItem> get() = items.filter { it.kind == ToolToggleKind.Skill }
+    fun itemsFor(kind: ToolToggleKind): List<ToolToggleItem> = items.filter { it.kind == kind }
     val mcpEnabled: Int get() = mcpItems.count { it.enabled }
     val skillEnabled: Int get() = skillItems.count { it.enabled }
 }
