@@ -4050,7 +4050,7 @@
     "app/src/test/kotlin/io/github/mangi/eta/agent/model/AgentRoleplayRuntimeTest.kt": "615506ed1c6a1e4a0dbe90525eb789df2dacf2be5eaf6fe996d024ca4120d113",
     "app/src/test/kotlin/io/github/mangi/eta/agent/model/AgentScreenObservationContractTest.kt": "660b1aac0ee587dd9b6dbae8802dde2922b8e3a61c38c7bcd91476ecf6ca8555",
     "app/src/test/kotlin/io/github/mangi/eta/agent/model/AgentSensitiveTranscriptTest.kt": "8104a7b0e9beea68cd52e8c45573e212841e6cb39c5d2226a0d8db78795776f1",
-    "app/src/test/kotlin/io/github/mangi/eta/agent/model/AgentTokenEconomyTest.kt": "b2ba9ae049189c183d20fd86f1dc11c9ecf6c9752c6c34af47413649c0ba7de5",
+    "app/src/test/kotlin/io/github/mangi/eta/agent/model/AgentTokenEconomyTest.kt": "c4f3ef7e4f13e6a0465b6be351568bd1376393ca92ac5d3e277724ff452f7c1f",
     "app/src/test/kotlin/io/github/mangi/eta/agent/model/AgentToolCatalogTest.kt": "db7b1d2c873b18a261fc0586f23f1d854e1eaf6b2454a139f829d08b61d4cd2f",
     "app/src/test/kotlin/io/github/mangi/eta/agent/model/AgentTraceFormatterTest.kt": "6e9822e79bc89dd0049e3ced3482086f74b7f8f7f94a6a2a405af1dfa6f82847",
     "app/src/test/kotlin/io/github/mangi/eta/agent/model/AgentWebToolCatalogTest.kt": "7a4c76bbe5b16591b56af7c58cb537725ec9b33cbf7c3b45e05974649685dcf2",

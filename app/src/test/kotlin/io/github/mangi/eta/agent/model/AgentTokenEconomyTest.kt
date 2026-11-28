@@ -120,7 +120,7 @@ class AgentTokenEconomyTest {
         )
         val request = LocalToolProfile.CODE.requestConfig(config)
         val extra = JSONObject(request.extraBodyJson)
-        assertEquals(setOf("temperature"), extra.keySet())
+        assertEquals(setOf("temperature"), extra.keys().asSequence().toSet())
         assertEquals(listOf("max_tokens"), request.customBody.map { it.key })
         assertEquals(config.model, request.model)
         assertEquals(config.hostedWebSearchEnabled, request.hostedWebSearchEnabled)
