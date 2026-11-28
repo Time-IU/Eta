@@ -124,6 +124,7 @@ fun ConversationSidePaneScaffold(
 
     BoxWithConstraints(modifier = modifier.fillMaxSize()) {
         val selectionLock = remember { ChatSelectionLock() }
+        val horizontalScrollLock = remember { ChatHorizontalScrollLock() }
         val density = LocalDensity.current
         val screenWidthDp = maxWidth.value.toInt()
         val effectiveGestureStartWidthDp = ConversationPaneEdgeWidthPolicy.effectiveWidth(edgeWidthDp, screenWidthDp)
@@ -254,8 +255,11 @@ fun ConversationSidePaneScaffold(
                 // leaves child text selection and vertical scrolling intact until horizontal intent wins.
                 .pointerInput(paneDragState, paneWidthPx, gestureStartWidth, backHandlerEnabled, sceneLifecycleState, workspaceVisible) {
                     awaitEachGesture {
-                        val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                        val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Final)
                         val openAtStart = currentVisible || paneDragState.offset > 0.5f
+                        // A Markdown table/code scroller owns this pointer sequence. Never ask the
+                        // drawer to "help" at its edge; this removes the first-right-swipe trap.
+                        if (horizontalScrollLock.active) return@awaitEachGesture
                         if (!ChatGesturePolicy.canStart(down.position.x, gestureStartWidth, openAtStart,
                                 selectionLock.active, workspaceVisible,
                                 backHandlerEnabled && sceneLifecycleState == Lifecycle.State.RESUMED)) return@awaitEachGesture
@@ -382,7 +386,10 @@ fun ConversationSidePaneScaffold(
                                 .focusGroup()
                                 .then(if (isRevealed) Modifier.clearAndSetSemantics {} else Modifier),
                         ) {
-                            CompositionLocalProvider(LocalChatSelectionLock provides selectionLock) { content() }
+                            CompositionLocalProvider(
+                                LocalChatSelectionLock provides selectionLock,
+                                LocalChatHorizontalScrollLock provides horizontalScrollLock,
+                            ) { content() }
                         }
                         if (isRevealed) {
                             Box(

@@ -28,7 +28,14 @@ internal object AgentPromptBuilder {
     ): JSONArray {
         val messages = buildSystemMessages(config, skillContext, memoryContext, rootAvailable, roleplayContext, executionContext, virtualScreenEnabled, virtualScreenFallbackEnabled, customization, localProfile)
         val chatOnly = localProfile == LocalToolProfile.CHAT
-        history.forEach { item ->
+        val promptHistory = if (chatOnly) history else recentHistory(history)
+        if (!chatOnly && promptHistory.size < history.size) {
+            messages.put(systemMessage(
+                "本次请求只带入最近 ${promptHistory.size} 条历史消息；更早内容没有丢失，需要时使用 conversation_history 按关键词或分页读取。" +
+                    "不要为了确认当前任务而自动读取全部旧历史。"
+            ))
+        }
+        promptHistory.forEach { item ->
             val json = runCatching { AgentConversationCodec.toJsonObject(item) }.getOrNull() ?: return@forEach
             // 纯聊天档不声明工具，历史里的工具调用记录必须一并跳过，否则部分服务商会拒绝请求。
             if (chatOnly && (json.optString("role") == "tool" || json.has("tool_calls"))) return@forEach
@@ -349,4 +356,14 @@ internal object AgentPromptBuilder {
         JSONObject()
             .put("role", "system")
             .put("content", content)
+    private fun recentHistory(history: List<AgentModelClient.ConversationMessage>): List<AgentModelClient.ConversationMessage> {
+        if (history.size <= RECENT_HISTORY_MESSAGES) return history
+        var start = history.size - RECENT_HISTORY_MESSAGES
+        // Do not begin in the middle of a tool exchange; move to the next user boundary.
+        while (start < history.size && history[start].role != "user") start++
+        return if (start < history.size) history.subList(start, history.size) else history.takeLast(RECENT_HISTORY_MESSAGES)
+    }
+
+    private const val RECENT_HISTORY_MESSAGES = 16
+
 }

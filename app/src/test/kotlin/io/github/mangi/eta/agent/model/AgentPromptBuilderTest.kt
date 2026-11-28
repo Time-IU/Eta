@@ -286,4 +286,28 @@ class AgentPromptBuilderTest {
             .map(::getJSONObject)
             .filter { message -> message.getString("role") == "system" }
             .map { message -> message.getString("content") }
+    @Test
+    fun oldHistoryIsNotDefaultPromptPayloadWhenItExceedsRecentWindow() {
+        val history = (0 until 24).map { index ->
+            AgentModelClient.ConversationMessage(
+                role = if (index % 2 == 0) "user" else "assistant",
+                content = "HISTORY_MARKER_$index",
+            )
+        }
+        val messages = AgentPromptBuilder.buildInitialMessages(
+            config = modelConfig(systemPrompt = "prompt", terminalTools = true, browserTools = false),
+            prompt = "CURRENT_MARKER",
+            images = emptyList(),
+            history = history,
+            skillContext = SkillContext.EMPTY,
+            rootAvailable = false,
+            localProfile = LocalToolProfile.FULL,
+        )
+        val json = messages.toString()
+        assertFalse(json.contains("HISTORY_MARKER_0"))
+        assertTrue(json.contains("HISTORY_MARKER_23"))
+        assertTrue(json.contains("conversation_history"))
+        assertTrue(json.contains("更早内容没有丢失"))
+    }
+
 }

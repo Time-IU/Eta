@@ -9,7 +9,7 @@ internal enum class LocalToolProfile(val id: String, private val toolNames: Set<
     CODE("task-code", setOf(
         "get_current_context", "ask_user", "terminal", "terminal_job", "get_logcat",
         "read_file", "stat_file", "list_directory", "grep_files", "glob_files", "search_files",
-        "edit_file", "write_file", "web_search", "fetch_url",
+        "edit_file", "write_file", "web_search", "fetch_url", "conversation_history",
     )),
     PHONE("task-phone", setOf(
         "get_current_context", "ask_user", "search_apps", "launch_app", "open_uri",
@@ -18,7 +18,7 @@ internal enum class LocalToolProfile(val id: String, private val toolNames: Set<
         "press_key", "wait_for_text", "wait_for_package", "wait",
         "device_status", "network_info", "get_device_state", "set_device_state",
         "set_brightness", "set_volume", "get_flashlight", "set_flashlight", "media_control",
-        "set_alarm", "list_alarms", "set_timer", "list_calendars", "create_calendar_event",
+        "set_alarm", "list_alarms", "set_timer", "conversation_history", "list_calendars", "create_calendar_event",
         "search_calendar_events", "create_note", "search_notes", "get_logcat", "read_file", "search_files",
     ));
 

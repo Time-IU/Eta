@@ -1,11 +1,16 @@
 package io.github.mangi.eta.ui.markdown
 
 import io.github.mangi.eta.ui.components.custom.rememberMessageSentenceBinding
+import io.github.mangi.eta.ui.components.LocalChatHorizontalScrollLock
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.OverscrollEffect
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
@@ -703,12 +708,29 @@ private fun MarkdownTableBlock(block: MarkdownTable, scope: MarkdownRenderScope)
     val headerColor = style.tableHeaderBackground
     val columns = block.header.size
     val rows = remember(block) { listOf(block.header) + block.rows }
+    val horizontalLock = LocalChatHorizontalScrollLock.current
+    val lockToken = remember { Any() }
+    val tableGestureLock = Modifier.pointerInput(horizontalLock) {
+        awaitEachGesture {
+            awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+            horizontalLock?.acquire(lockToken)
+            try {
+                while (true) {
+                    val event = awaitPointerEvent(PointerEventPass.Final)
+                    if (event.changes.none { it.pressed }) break
+                }
+            } finally {
+                horizontalLock?.release(lockToken)
+            }
+        }
+    }
 
     BoxWithConstraints(Modifier.fillMaxWidth()) {
         val availableWidth = constraints.maxWidth
         Box(
             modifier = Modifier
                 .fillMaxWidth()
+                .then(tableGestureLock)
                 .horizontalScroll(rememberScrollState()),
         ) {
             Layout(
