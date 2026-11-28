@@ -58,12 +58,12 @@ jobs:
             "-Peta.buildMetadata=private.${GITHUB_SHA:0:12}" \
             :app:assertPrivateUnsignedBuild :app:assembleRelease
 
-      - name: Run Vertex and upgrade regressions
+      - name: Run tool profile, preview and protocol regressions
         run: |
           ./gradlew --no-daemon --max-workers=2 :app:testDebugUnitTest \
-            --tests "*VertexGenerateContentTest" --tests "*GeminiProviderConfigurationTest" \
-            --tests "*GeminiModelCatalogHttpTest" --tests "*GeminiModelCapabilitiesTest" \
-            --tests "*GeminiInteractionsTest" --tests "*EtaDatabaseMigrationTest"
+            --tests "*AgentTokenEconomyTest" --tests "*AgentToolCatalogTest" \
+            --tests "*AgentModelClientLoopTest" --tests "*ChatToolCallHistoryTest" \
+            --tests "*VertexGenerateContentTest" --tests "*AgentRuntimePolicyTest"
 
       - name: Validate and package unsigned artifact
         shell: bash

@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="local_profile_code">Code troubleshooting</string>
+    <string name="local_profile_phone">Phone operations</string>
+    <string name="local_profile_menu">Tool profile (%1$s)</string>
+    <string name="local_profile_select_title">Tool profile</string>
+    <string name="local_profile_select_help">The next task uses this profile. Templates only narrow enabled local tools; permissions and provider settings stay unchanged.</string>
+    <string name="local_profile_code_help">Terminal, files and diagnostics. Large results are previewed first.</string>
+    <string name="local_profile_phone_help">Device and app controls. Large logs and searches are previewed first.</string>
+    <string name="local_profile_full_help">Use all currently permitted tools. Keep the existing result behavior.</string>
+</resources>

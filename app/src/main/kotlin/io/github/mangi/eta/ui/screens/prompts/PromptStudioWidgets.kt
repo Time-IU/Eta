@@ -119,12 +119,14 @@ internal suspend fun buildEffectivePreview(
                 .filter { io.github.mangi.eta.agent.skill.SkillCompatibilityChecker.evaluate(it).available },
         )
     }.getOrElse { SkillContext.EMPTY }
+    val profile = LocalToolProfileStore.current(config.providerId, config.model)
     val system = AgentPromptBuilder.buildSystemMessages(
         config = config,
         skillContext = skillContext,
         memoryContext = memoryContext,
         rootAvailable = capabilities.rootAvailable,
         customization = customization,
+        localProfile = profile,
     )
     // 真实请求还会追加两样：MCP 工具、会话历史工具（conversation_history）。
     // 少了它们预览会永远比实际少（上次 114 vs 115 就差分这一个会话工具）。
@@ -146,7 +148,7 @@ internal suspend fun buildEffectivePreview(
         memoryWritable = true,
         capabilities = capabilities,
         localWebSearch = !config.usesHostedWebSearch,
-        localProfile = LocalToolProfileStore.current(config.providerId, config.model),
+        localProfile = profile,
         policy = policy,
         additionalTools = additionalTools,
     )

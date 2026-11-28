@@ -447,6 +447,7 @@ internal class AgentRuntimeRunExecutor(
                 memoryContext = memoryContext,
                 additionalTools = runTools,
                 executionContext = executor.terminalExecutionContext,
+                resultPreviewSourceAllowed = executor::canReadCapturedResult,
             ) { event ->
                 timing.accept(event)
                 acceptEvent(

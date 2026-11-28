@@ -119,15 +119,25 @@ internal object AgentModelClient {
         onContextSnapshot: (AgentContextSnapshot) -> Unit = {},
         onTranscript: (List<ConversationMessage>) -> Unit = {},
         restrictedToolNames: Set<String>? = null,
+        resultPreviewSourceAllowed: ((String) -> Boolean)? = null,
         onEvent: (AgentEvent) -> Unit = {}
     ): ModelResponse.Text {
         config.validate()
         // 自定义提示词与工具白名单是正式配置：每次 run 开始读一次，避免轮内改动让前缀反复失效。
         val customization = PromptCustomizationStore.load()
         val toolPolicy = AgentToolPolicyStore.load()
+        val selectedProfile = LocalToolProfileStore.current(config.providerId, config.model)
+        // Task templates apply to the user's main run, not restricted reviews or child agents.
+        val localProfile = if (selectedProfile.isTaskTemplate && (restrictedToolNames != null || toolFilter != null)) {
+            LocalToolProfile.FULL
+        } else selectedProfile
+        val requestConfig = localProfile.requestConfig(config)
+        val resultPreviews = if (localProfile.isTaskTemplate && resultPreviewSourceAllowed != null && !compactOnly && !rewriteReply) {
+            AgentToolResultPreviews()
+        } else null
         val initialCapabilities = capabilitiesProvider()
         val messages = AgentPromptBuilder.buildInitialMessages(
-            config,
+            requestConfig,
             prompt,
             images,
             history,
@@ -139,6 +149,7 @@ internal object AgentModelClient {
             virtualScreenEnabled = initialCapabilities.virtualScreenEnabled,
             virtualScreenFallbackEnabled = initialCapabilities.virtualScreenFallbackEnabled,
             customization = customization,
+            localProfile = localProfile,
         )
         if (rewriteReply) {
             messages.put(messages.length() - 1, AgentConversationCodec.userTextMessage(
@@ -157,7 +168,7 @@ internal object AgentModelClient {
         val transcript = JSONArray()
         // 旧 history 中的无效消息可能在组装时被跳过，系统边界不能由 history 条数倒推。
         val systemCount = AgentPromptBuilder.buildSystemMessages(
-            config, skillContext, memoryContext, initialCapabilities.rootAvailable, roleplayContext, executionContext, initialCapabilities.virtualScreenEnabled, initialCapabilities.virtualScreenFallbackEnabled, customization,
+            requestConfig, skillContext, memoryContext, initialCapabilities.rootAvailable, roleplayContext, executionContext, initialCapabilities.virtualScreenEnabled, initialCapabilities.virtualScreenFallbackEnabled, customization, localProfile,
         ).length()
         // MCP 工具只在 run 开始时压一次：每轮重复解析这 190KB JSON 纯属浪费。
         val remoteToolNames = (0 until additionalTools.length()).mapNotNull { index ->
@@ -183,7 +194,7 @@ internal object AgentModelClient {
                 memoryWritable = roleplayContext == null,
                 capabilities = capabilities,
                 localWebSearch = !config.usesHostedWebSearch,
-                localProfile = LocalToolProfileStore.current(config.providerId, config.model),
+                localProfile = localProfile,
                 policy = toolPolicy,
                 additionalTools = compactedAdditionalTools,
                 restrictedToolNames = restrictedToolNames,
@@ -200,6 +211,16 @@ internal object AgentModelClient {
             return toolFilter?.invoke(enabled) ?: enabled
         }
         val tools = toolsFor(initialCapabilities)
+        val templateInitialTools = if (localProfile.isTaskTemplate) toolNames(tools) else null
+        fun templateScoped(catalog: JSONArray): JSONArray {
+            val allowed = templateInitialTools ?: return catalog
+            return JSONArray().also { scoped ->
+                for (i in 0 until catalog.length()) {
+                    val entry = catalog.getJSONObject(i)
+                    if (toolName(entry) in allowed) scoped.put(entry)
+                }
+            }
+        }
         // 只在请求侧丢最老轮次：数据库与界面一条不删；系统提示、记忆与当前输入永不裁。
         val trimOutcome = if (rewriteReply || compactOnly) AgentHistoryTrimmer.Outcome() else
             AgentHistoryTrimmer.trimInPlace(
@@ -231,7 +252,7 @@ internal object AgentModelClient {
                 capabilities.virtualScreenEnabled != promptVirtualScreenEnabled ||
                 capabilities.virtualScreenFallbackEnabled != promptVirtualScreenFallbackEnabled) {
                 val systemMessages = AgentPromptBuilder.buildSystemMessages(
-                    config, skillContext, memoryContext, capabilities.rootAvailable, roleplayContext, executionContext, capabilities.virtualScreenEnabled, capabilities.virtualScreenFallbackEnabled, customization,
+                    requestConfig, skillContext, memoryContext, capabilities.rootAvailable, roleplayContext, executionContext, capabilities.virtualScreenEnabled, capabilities.virtualScreenFallbackEnabled, customization, localProfile,
                 )
                 for (index in 0 until systemMessages.length()) {
                     messages.put(index, systemMessages.getJSONObject(index))
@@ -239,11 +260,11 @@ internal object AgentModelClient {
                 promptRootAvailable = capabilities.rootAvailable
                 promptVirtualScreenEnabled = capabilities.virtualScreenEnabled
                 promptVirtualScreenFallbackEnabled = capabilities.virtualScreenFallbackEnabled
-                publishedTools = toolsFor(capabilities)
+                publishedTools = templateScoped(toolsFor(capabilities))
                 return publishedTools
             }
             val published = toolNames(publishedTools)
-            val added = toolsFor(capabilities).let { fresh ->
+            val added = templateScoped(toolsFor(capabilities)).let { fresh ->
                 (0 until fresh.length()).map(fresh::getJSONObject).filter { toolName(it) !in published }
             }
             if (added.isNotEmpty()) {
@@ -258,7 +279,7 @@ internal object AgentModelClient {
             onContextSnapshot = if (rewriteReply) ({ _ -> }) else onContextSnapshot,
             onTranscript = onTranscript,
             sessionId = sessionId,
-            config = config,
+            config = requestConfig,
             messages = messages,
             tools = tools,
             provider = provider,
@@ -266,6 +287,9 @@ internal object AgentModelClient {
                 if (!Prefs.isToolEnabled(call.name) || !toolPolicy.allows(call.name)) {
                     ToolResult(JSONObject().put("ok", false).put("code", "TOOL_NOT_ALLOWED_BY_POLICY")
                         .put("message", "该工具不在本次工具白名单中，未执行").toString())
+                } else if (templateInitialTools != null && call.name !in templateInitialTools) {
+                    ToolResult(JSONObject().put("ok", false).put("code", "TOOL_NOT_ALLOWED_BY_PROFILE")
+                        .put("message", "该工具不在本轮任务模板中，未执行").toString())
                 } else if (restrictedToolNames != null && call.name !in restrictedToolNames) {
                     ToolResult(JSONObject().put("ok", false).put("code", "REVIEW_TOOL_DENIED")
                         .put("message", "此工具不属于自动复盘能力").toString())
@@ -273,7 +297,22 @@ internal object AgentModelClient {
                     val unavailable = AgentToolRequirements.find(call.name)
                         ?.let { capabilitiesProvider().unavailableCode(call.name) }
                     if (unavailable == null) {
-                        toolExecutor.execute(call)
+                        val refArgs = AgentToolResultPreviews.referenceArguments(call)
+                        if (refArgs == null) {
+                            toolExecutor.execute(call)
+                        } else if (call.name == "read_file" && resultPreviews != null && resultPreviewSourceAllowed != null) {
+                            val livePolicy = AgentToolPolicyStore.load()
+                            val capabilities = capabilitiesProvider()
+                            val fileAllowed = livePolicy.allows(call.name) && resultPreviewSourceAllowed(call.name)
+                            resultPreviews.read(refArgs, capabilities.rootAvailable) { source ->
+                                fileAllowed && Prefs.isToolEnabled(source) && toolPolicy.allows(source) &&
+                                    livePolicy.allows(source) && templateInitialTools?.contains(source) == true &&
+                                    resultPreviewSourceAllowed(source) && capabilities.unavailableCode(source) == null
+                            }
+                        } else {
+                            ToolResult(JSONObject().put("ok", false).put("code", "UNSUPPORTED_FILE_REFERENCE")
+                                .put("message", "结果引用只能由当前运行的 read_file 分页读取，本次未执行").toString(), sensitive = true)
+                        }
                     } else {
                         ToolResult(
                             JSONObject().put("ok", false).put("code", unavailable)
@@ -290,6 +329,8 @@ internal object AgentModelClient {
             initialSupplementIndex = initialSupplementIndex,
             remoteToolNames = remoteToolNames,
             toolsForRound = ::toolsForRound,
+            resultPreviews = resultPreviews,
+            previewRootAvailable = { capabilitiesProvider().rootAvailable },
         )
         val result = try {
             if (compactOnly) loop.compactOnly() else loop.run()

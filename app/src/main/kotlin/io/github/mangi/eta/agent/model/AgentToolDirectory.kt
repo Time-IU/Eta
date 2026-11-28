@@ -51,12 +51,22 @@ internal object AgentToolDirectory {
             }
         }
         val policyTools = policy.filterTools(tools)
-        return if (restrictedToolNames == null) {
-            policyTools
-        } else JSONArray().also { filtered ->
+        if (!localProfile.isTaskTemplate && restrictedToolNames == null) return policyTools
+        return JSONArray().also { filtered ->
             for (index in 0 until policyTools.length()) {
                 val schema = policyTools.getJSONObject(index)
-                if (schema.optJSONObject("function")?.optString("name") in restrictedToolNames) filtered.put(schema)
+                val function = schema.optJSONObject("function") ?: continue
+                val name = function.optString("name")
+                if (!localProfile.allows(name) || (restrictedToolNames != null && name !in restrictedToolNames)) continue
+                if (localProfile.isTaskTemplate && name == "read_file") {
+                    // Clone only the decorated schema: never mutate a reusable catalog entry.
+                    val copy = org.json.JSONObject(schema.toString())
+                    copy.getJSONObject("function").getJSONObject("parameters").getJSONObject("properties")
+                        .getJSONObject("path").apply {
+                            put("description", optString("description") + " 或本轮返回的 result_ref，用于按页读取已捕获结果。")
+                        }
+                    filtered.put(copy)
+                } else filtered.put(schema)
             }
         }
     }

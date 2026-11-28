@@ -16,11 +16,12 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.Chat
-import androidx.compose.material.icons.rounded.Folder
+import androidx.compose.material.icons.rounded.Check
+import androidx.compose.material.icons.rounded.Code
+import androidx.compose.material.icons.rounded.PhoneAndroid
 import androidx.compose.material.icons.rounded.Widgets
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -32,6 +33,7 @@ import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import io.github.mangi.eta.R
@@ -41,43 +43,22 @@ import io.github.mangi.eta.ui.model.AgentModelOptionUi
 import top.yukonga.miuix.kmp.basic.Icon
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 
-/**
- * 顶栏的模式开关：只有「全部工具」和「纯聊天」两种，图标分段式，点一下就切。
- *
- * 模式只决定发给模型的工具清单，不影响工具自身的执行能力。
- *
- * 工作区是这颗胶囊的第三段：点它进入文件面板，此时高亮滑到第三格；
- * 点回「全部工具」或「纯聊天」即退出面板。三者共用一个滑动指示器，观感是一颗东西。
- * 语音播报在最左边，不再和会话列表抢位置。
- */
+private val toolChoices = listOf(LocalToolProfile.FULL, LocalToolProfile.CODE, LocalToolProfile.PHONE)
 
-/**
- * 段顺序：纯聊天在左、全部工具居中、工作区在右。
- *
- * 纯聊天放最左是因为它是「收窄」的方向，往左让；全部工具是默认状态放中间最稳，
- * 手指落在中间也不容易误切；工作区是跳转入口，放最右与系统「更多」的位置一致。
- */
-private val profileOptions = listOf(LocalToolProfile.CHAT, LocalToolProfile.FULL)
+private fun profileLabel(profile: LocalToolProfile): Int = when (profile) {
+    LocalToolProfile.FULL -> R.string.local_profile_full
+    LocalToolProfile.CHAT -> R.string.local_profile_chat
+    LocalToolProfile.CODE -> R.string.local_profile_code
+    LocalToolProfile.PHONE -> R.string.local_profile_phone
+}
 
-/** 旧配置里的中间档一律归到「全部工具」：存储值不动，等用户主动切一次才被改写。 */
-internal fun profileOption(profile: LocalToolProfile): LocalToolProfile =
-    if (profile == LocalToolProfile.CHAT) LocalToolProfile.CHAT else LocalToolProfile.FULL
-
-/** 胶囊三段的统一高度：指示器和图标都按这个尺寸排。 */
+/** 胶囊两段的统一高度：指示器和图标都按这个尺寸排。 */
 private val CapsuleSegmentHeight = 27.dp
 
 /** 指示器滑动时长：与面板滑入同一条曲线，看起来是同一个动作带出的。 */
 private val CapsuleIndicatorMs = 280
 
-/**
- * 顶栏模式胶囊：三段合并成一颗长胶囊——纯聊天 / 全部工具 / 工作区。
- *
- * 选中态用一颗滑动指示器表达，而不是每段各自画背景：各自画背景时高亮会「瞬移」到
- * 新段上，滑动则让三段读起来是同一个控件的不同位置。
- *
- * @param workspaceActive 工作区面板是否打开。打开时高亮停在第三格，
- *   点「全部工具」或「纯聊天」由调用方负责退出面板（本组件只负责把高亮滑回去）。
- */
+/** Two existing segments. Chat is still one tap; the tools segment opens the profile choices. */
 @Composable
 internal fun LocalProfileTopBarCapsule(
     model: AgentModelOptionUi?,
@@ -87,17 +68,24 @@ internal fun LocalProfileTopBarCapsule(
     onCloseWorkspace: () -> Unit = {},
 ) {
     val profileKey = model?.let { it.providerId to it.modelId }
+    val canSelectTemplate = LocalToolProfileStore.canSelectTemplate(profileKey?.first, profileKey?.second)
     var profile by remember(profileKey) {
         mutableStateOf(LocalToolProfileStore.current(profileKey?.first, profileKey?.second))
     }
-    val current = profileOption(profile)
+    var showProfiles by remember(profileKey) { mutableStateOf(false) }
     val haptic = LocalHapticFeedback.current
-
-    // 两段等宽：选中索引 → 指示器位移。索引 0=纯聊天 1=全部工具 2=工作区。
-    val selectedIndex = if (current == LocalToolProfile.CHAT) 0 else 1
-    // 记住上一段工作区状态：从工作区退出时高亮要滑回工具/聊天，而不是瞬移。
-    var lastIndex by remember { mutableIntStateOf(if (current == LocalToolProfile.CHAT) 0 else 1) }
-    if (!workspaceActive) lastIndex = selectedIndex
+    val selectedIndex = if (profile == LocalToolProfile.CHAT) 0 else 1
+    fun select(next: LocalToolProfile) {
+        if (next.isTaskTemplate && !canSelectTemplate) {
+            showProfiles = false
+            return
+        }
+        LocalToolProfileStore.save(next, profileKey?.first, profileKey?.second)
+        profile = next
+        showProfiles = false
+        if (workspaceActive) onCloseWorkspace()
+        if (next == LocalToolProfile.CHAT) LocalProfileSwitchNotice.publish(LocalToolProfileSwitch.Chat)
+    }
 
     // 半透明高亮：alpha 压到 0.42 一档，能透出底下的 surfaceContainer，
     // 不至于像一颗实心色块糊在顶栏上。指示器画在图标下层，所以图标不会被染混色。
@@ -142,33 +130,52 @@ internal fun LocalProfileTopBarCapsule(
                 selected = selectedIndex == 0,
                 onClick = {
                     haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                    LocalToolProfileStore.save(LocalToolProfile.CHAT, profileKey?.first, profileKey?.second)
-                    profile = LocalToolProfile.CHAT
-                    if (workspaceActive) onCloseWorkspace()
-                    LocalProfileSwitchNotice.publish(LocalToolProfileSwitch.Chat)
+                    select(LocalToolProfile.CHAT)
                 },
             )
-            // 第二段：全部工具（默认）
+            // 第二段：工具选择；沿用相同宽度，当前模板用图标区分。
             CapsuleSegment(
-                icon = Icons.Rounded.Widgets,
-                label = stringResource(R.string.local_profile_full),
+                icon = when (profile) {
+                    LocalToolProfile.CODE -> Icons.Rounded.Code
+                    LocalToolProfile.PHONE -> Icons.Rounded.PhoneAndroid
+                    else -> Icons.Rounded.Widgets
+                },
+                label = stringResource(R.string.local_profile_menu, stringResource(profileLabel(profile))),
                 selected = selectedIndex == 1,
                 onClick = {
                     haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                    LocalToolProfileStore.save(LocalToolProfile.FULL, profileKey?.first, profileKey?.second)
-                    profile = LocalToolProfile.FULL
-                    if (workspaceActive) onCloseWorkspace()
+                    showProfiles = true
                 },
             )
         }
-
+    }
+    if (showProfiles) {
+        EtaWindowDialog(
+            show = true,
+            title = stringResource(R.string.local_profile_select_title),
+            summary = stringResource(R.string.local_profile_select_help),
+            onDismissRequest = { showProfiles = false },
+        ) {
+            toolChoices.forEach { option ->
+                EtaActionPreference(
+                    title = stringResource(profileLabel(option)),
+                    summary = stringResource(when (option) {
+                        LocalToolProfile.CODE -> R.string.local_profile_code_help
+                        LocalToolProfile.PHONE -> R.string.local_profile_phone_help
+                        else -> R.string.local_profile_full_help
+                    }),
+                    endIcon = if (profile == option) Icons.Rounded.Check else null,
+                    modifier = Modifier.semantics { selected = profile == option },
+                    enabled = !option.isTaskTemplate || canSelectTemplate,
+                    onClick = { select(option) },
+                )
+            }
+        }
     }
 }
 
 /** 胶囊单段的宽度：两段必须等宽，否则指示器按段宽算出的位移会与图标错位。 */
 private val CapsuleSegmentWidth = 33.dp
-
-/** 胶囊单段的宽度：两段必须等宽，否则指示器按段宽算出的位移会与图标错位。 */
 
 /** 胶囊里的一段：图标 + 选中色。背景由滑动指示器画，这里只负责图标和点击。 */
 @Composable
@@ -184,7 +191,7 @@ private fun CapsuleSegment(
             .height(CapsuleSegmentHeight)
             .clip(CircleShape)
             .clickable { onClick() }
-            .semantics { contentDescription = label },
+            .semantics { contentDescription = label; this.selected = selected },
         contentAlignment = Alignment.Center,
     ) {
         Icon(

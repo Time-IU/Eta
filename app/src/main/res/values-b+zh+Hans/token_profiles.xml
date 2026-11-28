@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="local_profile_code">代码排障</string>
+    <string name="local_profile_phone">手机操作</string>
+    <string name="local_profile_menu">工具档（%1$s）</string>
+    <string name="local_profile_select_title">选择工具档</string>
+    <string name="local_profile_select_help">从下一次任务生效。模板只收窄已开启的本地工具，不改变权限或服务商设置。</string>
+    <string name="local_profile_code_help">保留终端、文件与诊断工具；大结果先发预览。</string>
+    <string name="local_profile_phone_help">保留设备与 App 操作工具；大日志与搜索结果先发预览。</string>
+    <string name="local_profile_full_help">使用当前允许的全部工具，保持原有结果返回方式。</string>
+</resources>

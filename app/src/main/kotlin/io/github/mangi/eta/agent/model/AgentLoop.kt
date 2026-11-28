@@ -44,6 +44,8 @@ internal class AgentLoop(
     private val roleplayContext: RoleplayRunContext? = null,
     initialSupplementIndex: Int = 0,
     private val memoryWorkGate: AgentMemoryWorkGate = AgentMemoryWorkGate(),
+    private val resultPreviews: AgentToolResultPreviews? = null,
+    private val previewRootAvailable: () -> Boolean = { false },
 ) {
     data class Result(
         val content: String,
@@ -136,8 +138,9 @@ internal class AgentLoop(
             toolCallValidator = AgentToolCallValidator(localToolsOnly(roundTools))
             publishTranscript()
             if (purpose.allowsTools) context.compact()
+            val projectedMessages = resultPreviews?.project(messages) ?: messages
             val requestMessages = AssistantScreenContextProjection.project(
-                roleplayContext?.projectMessages(messages) ?: messages,
+                roleplayContext?.projectMessages(projectedMessages) ?: projectedMessages,
             )
             var roundInputTokens: Int? = null
             var roundUsage: AgentTokenUsage? = null
@@ -216,6 +219,10 @@ internal class AgentLoop(
             runController.throwIfCancelled()
             val assistantMessage = providerResponse.assistantMessage
             val toolCalls = AgentConversationCodec.parseToolCalls(assistantMessage)
+            // Before any validation/rejection or checkpoint publication, redact pager arguments from history.
+            for (call in toolCalls) if (AgentToolResultPreviews.referenceArguments(call) != null) {
+                sensitiveToolCallIds += call.id
+            }
             if (!purpose.allowsTools && toolCalls.isNotEmpty()) {
                 throw AgentModelFailure("REPLY_REWRITE_TOOL_CALL", false, "改写回复时模型请求了工具，已停止；原回复未改变。")
             }
@@ -259,8 +266,12 @@ internal class AgentLoop(
             if (toolCalls.isNotEmpty()) {
                 val outcomes = executeToolBatch(round, toolCalls, providerResponse.stopReason)
                 publishToolDuration(round)
+                val previews = resultPreviews?.takeIf { "read_file" in availableToolNames }
+                val rootAvailable = previews != null && previewRootAvailable()
                 outcomes.forEach { outcome ->
-                    appendMessage(AgentConversationCodec.toolResultMessage(outcome.call, outcome.result))
+                    val original = AgentConversationCodec.toolResultMessage(outcome.call, outcome.result)
+                    appendMessage(original)
+                    previews?.capture(original, outcome.call, outcome.result, rootAvailable)
                 }
                 publishTranscript()
                 appendToolImages(round, outcomes)

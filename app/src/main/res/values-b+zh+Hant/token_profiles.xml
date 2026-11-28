@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="local_profile_code">程式碼排障</string>
+    <string name="local_profile_phone">手機操作</string>
+    <string name="local_profile_menu">工具模式（%1$s）</string>
+    <string name="local_profile_select_title">選擇工具模式</string>
+    <string name="local_profile_select_help">從下一次任務生效。範本只縮小已開啟的本機工具範圍，不改變權限或服務商設定。</string>
+    <string name="local_profile_code_help">保留終端、檔案與診斷工具；大型結果先傳送預覽。</string>
+    <string name="local_profile_phone_help">保留裝置與 App 操作工具；大型記錄與搜尋結果先傳送預覽。</string>
+    <string name="local_profile_full_help">使用目前允許的全部工具，維持原有的結果回傳方式。</string>
+</resources>

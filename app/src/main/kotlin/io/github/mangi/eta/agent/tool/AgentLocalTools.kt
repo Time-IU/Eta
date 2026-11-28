@@ -540,6 +540,17 @@ internal class AgentLocalTools(
         return guiControl?.withAction { execute() } ?: execute()
     }
 
+    // Reapply live category gates before releasing a previously captured result page.
+    fun canReadCapturedResult(toolName: String): Boolean {
+        if (closed.get() || isRunCancelled() || !isToolEnabled(toolName)) return false
+        return when (toolName) {
+            in AgentTerminalToolCatalog.names, in AgentFileToolCatalog.names -> terminalToolsEnabled()
+            "web_search" -> browserToolsEnabled()
+            "get_logcat", "search_files" -> deviceToolPermissionError(toolName) == null
+            else -> false
+        }
+    }
+
     private fun deviceToolPermissionError(
         toolName: String,
     ): AgentModelClient.ToolResult? {

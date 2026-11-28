@@ -59,7 +59,7 @@ report = {
     'licenseReviewStatus': 'existing combined-source distribution questions unresolved; private storage is not certification',
 }
 (output / 'build-manifest.json').write_text(json.dumps(report, ensure_ascii=False, indent=2) + '\n')
-shutil.copyfile(root / 'docs/private-build/CHANGELOG-upstream-vertex.md', output / 'CHANGELOG.md')
+shutil.copyfile(root / 'docs/private-build/CHANGELOG-token-economy.md', output / 'CHANGELOG.md')
 (output / 'README.txt').write_text(
     'Private unsigned APK. Cannot be installed until signed locally.\n'
     'Use the existing custom certificate for upgrade compatibility; never upload its private key.\n'
